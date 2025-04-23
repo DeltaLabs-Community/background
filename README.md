@@ -1,13 +1,13 @@
-# 🔥 Pulse
+# Pulse
 
-A runtime-independent background job queue for Nodejs and Bun
+An extendible background job queue for Nodejs and Bun
 
 ## Features
 
 - 🚀 **Performance**: Parallel job processing with configurable concurrency
-- 💾 **Multiple Storage Options**: In-memory (default) or Redis (for distributed processing)
+- 💾 **Multiple Storage Options**: In-memory (default) , Redis (for distributed processing) or PostgeSQL and MongoDB
 - 📅 **Job Scheduling**: Schedule jobs to run at specific times or after delays
-- 🔌 **Middleware**: Easy integration with Hono applications
+- 🔌 **Middleware**: Easy integration with many backend frameworks.
 - ⚡ **Distributed Processing**: Support for multiple instances with Redis backend
 - 🔄 **Type Safety**: Built with TypeScript for excellent developer experience
 - 🔥 **Extendible**: Easily extend and write your own logic
@@ -23,11 +23,9 @@ A runtime-independent background job queue for Nodejs and Bun
 ├── tests/                 # Test files
 ├── dist/                  # Build output
 │   ├── node/             # Node.js build
-│   ├── deno/             # Deno build
 │   └── bun/              # Bun build
 ├── tsconfig.base.json     # Base TypeScript config
 ├── tsconfig.node.json     # Node.js specific config
-├── tsconfig.deno.json     # Deno specific config
 └── tsconfig.bun.json      # Bun specific config
 ```
 
@@ -58,6 +56,26 @@ declare module "hono"{
     }
 }
 
+//honoJobs.middleware.ts
+export const honoJobs = (app:Hono,queues:JobQueue[]) => {
+  queues.forEach(queue => {
+    queue.start()
+    app.get(`/jobs/${queue.getName()}/:jobId`,async (c,next) => {
+      const {jobId} = c.req.param()
+      const job = await queue.getJob(jobId)
+      if(!job){
+        c.status(404)
+        return c.json({error:'Job not found'})
+      }
+      c.json({job:job})
+    })
+  })
+  return async (c:Context,next:Next) => {
+    c.set("queues",queues)
+    await next()
+  }
+}
+
 // server.ts
 import { Hono } from 'hono';
 import { JobQueue, InMemoryJobStorage, honoJobs } from 'pulse';
@@ -80,7 +98,7 @@ app.use(honoJobs(app, [queue]));
 // Add a job
 app.post("/send-email", async (c) => {
   const { to, subject } = await c.req.json();
-  const job = await c.get('queues').add("email-job", { to, subject });
+  const job = await c.get('queues').find((q)=> q.getName() == "default").add("email-job", { to, subject });
   return c.json({ jobId: job.id });
 });
 ```
