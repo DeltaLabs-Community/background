@@ -1,0 +1,54 @@
+{
+  "name": "pulse",
+  "version": "0.1.0",
+  "description": "An extendible background job queue for js/ts applications",
+  "type": "commonjs",
+  "main": "./dist/node/index.js",
+  "types": "./dist/node/index.d.ts",
+  "scripts": {
+    "build": "npm run build:node && npm run build:deno && npm run build:bun",
+    "build:node": "tsc -p tsconfig.node.json",
+    "build:deno": "tsc -p tsconfig.deno.json",
+    "build:bun": "tsc -p tsconfig.bun.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:node": "vitest run",
+    "test:bun": "bun test",
+    "test:redis": "vitest run tests/redis-storage.test.ts",
+    "test:distributed": "vitest run tests/distributed-job-queue.test.ts",
+    "test:queue": "vitest run tests/job-queue.test.ts",
+    "test:storage": "vitest run tests/in-memory-storage.test.ts",
+    "test:postgresql": "vitest run tests/postgresql-job-queue.test.ts",
+    "test:mongodb": "vitest run tests/mongodb-job-queue.test.ts",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "background-jobs",
+    "queue",
+    "bun",
+    "node"
+  ],
+  "author": "",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "mongodb":"^6.16.0",
+    "pg":"^8.15.1",
+    "ioredis":"^5.6.1"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.1.1",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1",
+    "mongodb":"6.16.0",
+    "pg":"^8.15.1",
+    "ioredis":"^5.6.1"
+  }
+}
