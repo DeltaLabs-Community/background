@@ -187,7 +187,6 @@ export class JobQueue extends EventTarget{
         job.completedAt = new Date();
         job.result = result;
         await this.storage.updateJob(job);
-        console.log('completed', job);
         this.dispatchEvent(new QueueEvent('completed', job, 'completed'));
       } catch (error) {
         // Mark job as failed
@@ -195,7 +194,6 @@ export class JobQueue extends EventTarget{
         job.completedAt = new Date();
         job.error = error instanceof Error ? error.message : String(error);
         await this.storage.updateJob(job);
-        this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
         throw error;
       }
     }

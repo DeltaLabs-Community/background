@@ -5,7 +5,7 @@ import { generateId } from "../utils/id-generator";
 import { QueueEvent } from "../utils/queue-event";
 
 // Type for Redis storage adapter with atomic operations
-interface RedisStorage extends JobStorage {
+export interface RedisStorage extends JobStorage {
   // Atomic job acquisition
   acquireNextJob(instanceId: string, ttl?: number): Promise<Job | null>;
   // Atomic job completion
