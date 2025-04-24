@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { JobStorage } from './index';
 import { Job, JobStatus } from '../types';
 
@@ -210,7 +210,7 @@ export class PostgreSQLJobStorage implements JobStorage {
          WHERE id = $1`,
         [jobId]
       );
-      return result.rowCount > 0;
+      return result.rowCount! > 0;
     } catch (error) {
       return false;
     }
