@@ -23,7 +23,7 @@ export class RedisJobStorage implements JobStorage {
    * @param redis - An ioredis client instance
    * @param options - Configuration options
    */
-  constructor(redis: any, options: { keyPrefix?: string } = {}) {
+  constructor(redis: Redis, options: { keyPrefix?: string } = {}) {
     this.redis = redis;
     this.keyPrefix = options.keyPrefix || 'jobqueue:';
     this.jobListKey = `${this.keyPrefix}jobs`;
