@@ -11,7 +11,17 @@ import type { Redis } from "ioredis";
  * Note: You must install the 'ioredis' package to use this adapter:
  * npm install ioredis
  */
-export class RedisJobStorage implements JobStorage {
+
+export interface RedisStorage extends JobStorage {
+  // Atomic job acquisition
+  acquireNextJob(instanceId: string, ttl?: number): Promise<Job | null>;
+  // Atomic job completion
+  completeJob(jobId: string, instanceId: string, result: any): Promise<void>;
+  // Atomic job failure
+  failJob(jobId: string, instanceId: string, error: string): Promise<void>;
+}
+
+export class RedisJobStorage implements RedisStorage {
   private readonly redis: Redis; // ioredis instance
   private readonly keyPrefix: string;
   private readonly jobListKey: string;
@@ -38,14 +48,8 @@ export class RedisJobStorage implements JobStorage {
     const statusKey = this.getStatusKey(job.status);
     
     const pipeline = this.redis.pipeline();
-    
-    // Store the job as JSON
     pipeline.set(jobKey, JSON.stringify(job));
-    
-    // Add job ID to the appropriate status set
     pipeline.sadd(statusKey, job.id);
-    
-    // Add to the jobs list
     pipeline.sadd(this.jobListKey, job.id);
     
     await pipeline.exec();

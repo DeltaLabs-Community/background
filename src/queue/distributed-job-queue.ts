@@ -1,19 +1,8 @@
-import { Job, JobHandler } from "../types";
+import { Job} from "../types";
 import { JobQueue } from "./job-queue";
-import { JobStorage } from "../storage";
 import { generateId } from "../utils/id-generator";
 import { QueueEvent } from "../utils/queue-event";
-
-// Type for Redis storage adapter with atomic operations
-export interface RedisStorage extends JobStorage {
-  // Atomic job acquisition
-  acquireNextJob(instanceId: string, ttl?: number): Promise<Job | null>;
-  // Atomic job completion
-  completeJob(jobId: string, instanceId: string, result: any): Promise<void>;
-  // Atomic job failure
-  failJob(jobId: string, instanceId: string, error: string): Promise<void>;
-}
-
+import { RedisStorage } from "../storage/redis-storage";
 /**
  * DistributedJobQueue extends JobQueue to provide distributed processing
  * capabilities across multiple instances/processes using Redis atomic operations.
