@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RedisJobStorage } from '../src/storage/redis-storage';
-import { RedisMock } from './mocks/redis-mock';
 import { Job, JobStatus } from '../src/types';
+import Redis from 'ioredis';
 
 describe('RedisJobStorage', () => {
-  let redis: RedisMock;
+  let redis: Redis;
   let storage: RedisJobStorage;
   let testJob: Job;
 
   beforeEach(() => {
-    redis = new RedisMock();
+    redis = new Redis({
+      host: 'localhost',
+      port: 6379,
+      db: 0,
+    });
     storage = new RedisJobStorage(redis, { keyPrefix: 'test:' });
     testJob = {
       id: 'test-job-1',

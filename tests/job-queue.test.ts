@@ -2,26 +2,42 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { JobQueue } from '../src/queue/job-queue';
 import { InMemoryJobStorage } from '../src/storage/memory-storage';
 import { JobHandler } from '../src/types';
+import { QueueEvent } from '../src/utils/queue-event';
+import { QueueEventData } from '../src/utils/queue-event';
 
 describe('JobQueue', () => {
   let queue: JobQueue;
   let storage: InMemoryJobStorage;
   let mockHandler: JobHandler;
+  let eventListener: EventListener;
 
   beforeEach(() => {
     // Create fresh storage and queue for each test
     storage = new InMemoryJobStorage();
     mockHandler = vi.fn().mockResolvedValue({ success: true });
-    queue = new JobQueue(storage, { concurrency: 1, name: 'test-queue' });
+    queue = new JobQueue(storage, { concurrency: 1, name: 'test-queue', processingInterval: 20 });
     
     // Register a mock handler
     queue.register('test-job', mockHandler);
+
+    // Add an event listener
+    eventListener = vi.fn().mockImplementation((eventData: QueueEventData) => {
+      console.log('Event received:', eventData);
+    });
+    
+    // register event listeners
+    queue.addEventListener('scheduled', eventListener);
+    queue.addEventListener('completed', eventListener);
+    queue.addEventListener('failed', eventListener);
   });
 
   afterEach(() => {
     // Stop the queue after each test
     queue.stop();
     vi.restoreAllMocks();
+    queue.removeEventListener('scheduled', eventListener);
+    queue.removeEventListener('completed', eventListener);
+    queue.removeEventListener('failed', eventListener);
   });
 
   it('should add a job to the queue', async () => {
@@ -32,6 +48,15 @@ describe('JobQueue', () => {
     expect(job.status).toBe('pending');
     expect(job.name).toBe('test-job');
     expect(job.data).toEqual({ message: 'Hello, World!' });
+    expect(eventListener).toHaveBeenCalledWith(expect.objectContaining({
+      job: expect.objectContaining({
+        id: job.id,
+        name: 'test-job',
+        data: { message: 'Hello, World!' },
+        status: 'pending'
+      }),
+      status: 'pending'
+    }));
     
     // Verify it's saved to storage
     const savedJob = await storage.getJob(job.id);
@@ -50,6 +75,15 @@ describe('JobQueue', () => {
     
     expect(job).toBeDefined();
     expect(job.scheduledAt).toEqual(futureDate);
+    expect(eventListener).toHaveBeenCalledWith(expect.objectContaining({
+      job: expect.objectContaining({
+        id: job.id,
+        name: 'test-job',
+        data: { message: 'Future task' },
+        status: 'pending'
+      }),
+      status: 'pending'
+    }));
     
     // Verify it's saved to storage with scheduled time
     const savedJob = await storage.getJob(job.id);
@@ -68,19 +102,15 @@ describe('JobQueue', () => {
     const now = new Date();
     vi.spyOn(global, 'Date').mockImplementation(() => now as any);
     
-    console.log('Adding job to queue');
     // Add a job before starting the queue
     const job = await queue.add('test-job', { message: 'Hello, World!' });
     
-    console.log('Starting queue');
     // Start processing jobs
     queue.start();
 
-    console.log('Waiting for job to be processed');
     // Wait longer to ensure job processing
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 25));
     
-    console.log('Checking job status');
     // Verify the handler was called with the correct data
     expect(mockHandler).toHaveBeenCalledWith({ message: 'Hello, World!' });
     
@@ -88,6 +118,16 @@ describe('JobQueue', () => {
     const processedJob = await storage.getJob(job.id);
     expect(processedJob?.status).toBe('completed');
     expect(processedJob?.result).toEqual({ success: true });
+
+    expect(eventListener).toHaveBeenCalledWith(expect.objectContaining({
+      job: expect.objectContaining({
+        id: job.id,
+        name: 'test-job',
+        data: { message: 'Hello, World!' },
+        status: 'completed'
+      }),
+      status: 'completed'
+    }));
   });
 
   it('should not process scheduled jobs before their time', async () => {
@@ -95,45 +135,67 @@ describe('JobQueue', () => {
     const futureDate = new Date();
     futureDate.setMinutes(futureDate.getMinutes() + 10); // 10 minutes in the future
     
-    console.log('Scheduling future job');
-    await queue.schedule('test-job', { message: 'Future task' }, futureDate);
+    const job = await queue.schedule('test-job', { message: 'Future task' }, futureDate);
     
-    console.log('Starting queue');
     // Start processing jobs
     queue.start();
     
-    console.log('Waiting to verify job is not processed');
     // Wait a bit
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 25));
     
     // Verify handler wasn't called for the future job
     expect(mockHandler).not.toHaveBeenCalled();
+    expect(eventListener).toHaveBeenCalledWith(expect.objectContaining({
+      job: expect.objectContaining({
+        id: job.id,
+        name: 'test-job',
+        data: { message: 'Future task' },
+        status: 'pending'
+      }),
+      status: 'pending'
+    }));
   });
 
   it('should process multiple jobs with configured concurrency', async () => {
     // Create a queue with concurrency of 2
-    const concurrentQueue = new JobQueue(storage, { concurrency: 2 });
+    const concurrentQueue = new JobQueue(storage, {
+      concurrency: 2,
+      processingInterval: 20,
+      name: 'concurrent-queue'
+     });
     
     // Create a handler that takes some time
     const slowHandler = vi.fn().mockImplementation(async () => {
       await new Promise(resolve => setTimeout(resolve, 20));
       return { success: true };
     });
+
+    const completedEventListener = vi.fn().mockImplementation((eventData: QueueEventData) => {
+      console.log('completed event received:', eventData);
+    });
     
+    // Register the slow handler
     concurrentQueue.register('slow-job', slowHandler);
     
-    console.log('Adding multiple jobs');
+    // unregister event listeners
+    concurrentQueue.removeEventListener('scheduled', eventListener);
+    concurrentQueue.removeEventListener('completed', completedEventListener);
+    
+    // register event listeners
+    concurrentQueue.addEventListener('scheduled', eventListener);
+    concurrentQueue.addEventListener('completed', completedEventListener);
     // Add multiple jobs before starting the queue
     await concurrentQueue.add('slow-job', { id: 1 });
     await concurrentQueue.add('slow-job', { id: 2 });
     await concurrentQueue.add('slow-job', { id: 3 });
-    
-    console.log('Starting queue with concurrency 2');
+
+    expect(eventListener).toHaveBeenCalledTimes(3);
+
     // Start processing
     concurrentQueue.start();
     
-    console.log('Waiting for jobs to be processed');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Wait for jobs to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     // Stop the queue
     concurrentQueue.stop();
@@ -142,5 +204,6 @@ describe('JobQueue', () => {
     expect(slowHandler).toHaveBeenCalledTimes(2);
     expect(slowHandler).toHaveBeenCalledWith({ id: 1 });
     expect(slowHandler).toHaveBeenCalledWith({ id: 2 });
+    expect(completedEventListener).toHaveBeenCalledTimes(2);
   });
 }); 

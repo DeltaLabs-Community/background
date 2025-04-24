@@ -2,8 +2,8 @@ import { Job } from "../types";
 import { JobStorage } from "../storage/index";
 import { JobHandler } from "../types";
 import { generateId } from "../utils/id-generator";
-
-export class JobQueue {
+import { QueueEvent } from "../utils/queue-event";
+export class JobQueue extends EventTarget{
     /**
      * Job handlers registered with this queue
      */
@@ -27,6 +27,7 @@ export class JobQueue {
     protected maxRetries: number = 3;
     
     constructor(storage: JobStorage, options: { concurrency?: number, name?: string, processingInterval?: number, maxRetries?: number } = {}) {
+      super();
       this.storage = storage;
       this.concurrency = options.concurrency || 1;
       this.name = options.name || 'default';
@@ -54,6 +55,7 @@ export class JobQueue {
       };
       
       await this.storage.saveJob(job);
+      this.dispatchEvent(new QueueEvent('scheduled', job, 'pending'));
       return job;
     }
     
@@ -77,6 +79,7 @@ export class JobQueue {
       };
       
       await this.storage.saveJob(job);
+      this.dispatchEvent(new QueueEvent('scheduled', job, 'pending'));
       return job;
     }
 
@@ -184,12 +187,15 @@ export class JobQueue {
         job.completedAt = new Date();
         job.result = result;
         await this.storage.updateJob(job);
+        console.log('completed', job);
+        this.dispatchEvent(new QueueEvent('completed', job, 'completed'));
       } catch (error) {
         // Mark job as failed
         job.status = 'failed';
         job.completedAt = new Date();
         job.error = error instanceof Error ? error.message : String(error);
         await this.storage.updateJob(job);
+        this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
         throw error;
       }
     }

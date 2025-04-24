@@ -19,6 +19,8 @@ import { JobQueue } from "./queue/job-queue";
 import { DistributedJobQueue } from "./queue/distributed-job-queue";
 import type { JobStorage } from "./storage";
 import { InMemoryJobStorage } from "./storage/memory-storage";
+export { QueueEvent } from "./utils/queue-event";
+export type { QueueEventData } from "./utils/queue-event";
 
 export const createJobQueue = (
   storage?: JobStorage,
