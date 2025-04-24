@@ -1,50 +1,50 @@
-import { Job } from "../types";
+import { Job, JobHandler } from "../types";
 import { JobQueue } from "./job-queue";
 import { JobStorage } from "../storage";
 import { generateId } from "../utils/id-generator";
+import { QueueEvent } from "../utils/queue-event";
 
-// Type for Redis storage adapter with locking
-interface DistributedStorage extends JobStorage {
-  acquireJobLock(jobId: string, instanceId: string, ttl?: number): Promise<boolean>;
-  releaseJobLock(jobId: string, instanceId: string): Promise<boolean>;
+// Type for Redis storage adapter with atomic operations
+interface RedisStorage extends JobStorage {
+  // Atomic job acquisition
+  acquireNextJob(instanceId: string, ttl?: number): Promise<Job | null>;
+  // Atomic job completion
+  completeJob(jobId: string, instanceId: string, result: any): Promise<void>;
+  // Atomic job failure
+  failJob(jobId: string, instanceId: string, error: string): Promise<void>;
 }
 
 /**
  * DistributedJobQueue extends JobQueue to provide distributed processing
- * capabilities across multiple instances/processes using a shared storage
- * like Redis.
- * 
- * Note: This requires a storage implementation that supports locking,
- * such as RedisJobStorage.
+ * capabilities across multiple instances/processes using Redis atomic operations.
  */
 export class DistributedJobQueue extends JobQueue {
   private readonly instanceId: string;
-  private readonly distributedStorage: DistributedStorage;
-  private readonly lockTTL: number = 30; // seconds
+  private readonly redisStorage: RedisStorage;
+  private readonly jobTTL: number = 30; // seconds
   
   /**
    * Create a distributed job queue
    * 
-   * @param storage - A storage implementation that supports locking
+   * @param storage - A storage implementation that supports atomic operations
    * @param options - Configuration options
    */
   constructor(
-    storage: DistributedStorage,
+    storage: RedisStorage,
     options: { 
       concurrency?: number;
       name?: string;
       instanceId?: string;
-      lockTTL?: number;
+      jobTTL?: number;
       processingInterval?: number;
       maxRetries?: number;
     } = {}
   ) {
     super(storage, options);
     
-    // Store reference to the storage with distributed capabilities
-    this.distributedStorage = storage;
+    this.redisStorage = storage;
     this.instanceId = options.instanceId || generateId(8);
-    this.lockTTL = options.lockTTL || 30;
+    this.jobTTL = options.jobTTL || 30;
   }
   
   /**
@@ -59,8 +59,22 @@ export class DistributedJobQueue extends JobQueue {
    * Override the parent's protected method
    */
   protected async processNextBatch(): Promise<void> {
-    // Use the parent implementation to get jobs that need processing
-    await super.processNextBatch();
+    // Skip if we're already processing the maximum number of jobs
+    if (this.activeJobs.size >= this.concurrency) {
+      return;
+    }
+    const availableSlots = this.concurrency - this.activeJobs.size;
+    // Try to acquire jobs atomically
+    for (let i = 0; i < availableSlots; i++) {
+      const job = await this.redisStorage.acquireNextJob(this.instanceId, this.jobTTL);
+      if (!job) {
+        break; // No more jobs available
+      }
+      this.activeJobs.add(job.id);
+      this.processJob(job).finally(() => {
+        this.activeJobs.delete(job.id);
+      });
+    }
   }
   
   /**
@@ -68,26 +82,15 @@ export class DistributedJobQueue extends JobQueue {
    * This is called by the parent class
    */
   protected async processJob(job: Job): Promise<void> {
-    // Try to acquire a lock on the job
-    const lockAcquired = await this.distributedStorage.acquireJobLock(
-      job.id,
-      this.instanceId,
-      this.lockTTL
-    );
-    
-    // If we couldn't acquire the lock, another instance is processing this job
-    if (!lockAcquired) {
-      return;
-    }
-    
     try {
-      // Call the parent implementation to process the job
+      // Get the handler using the parent's processJob method
       await super.processJob(job);
     } catch (error) {
+      // Mark job as failed atomically
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await this.redisStorage.failJob(job.id, this.instanceId, errorMessage);
+      this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
       throw error;
-    } finally {
-      // Always release the lock when done
-      await this.distributedStorage.releaseJobLock(job.id, this.instanceId);
     }
   }
 } 

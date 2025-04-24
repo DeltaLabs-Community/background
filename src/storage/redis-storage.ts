@@ -162,4 +162,56 @@ export class RedisJobStorage implements JobStorage {
   private getStatusKey(status: JobStatus): string {
     return `${this.statusSetKeyPrefix}${status}`;
   }
+
+  /**
+   * Acquire the next job from the queue
+   * 
+   * @param instanceId - Unique ID of this worker instance
+   * @param ttl - Time-to-live for the lock in seconds
+   * @returns The next job or null if no job is available
+   */
+  async acquireNextJob(instanceId: string, ttl: number): Promise<Job | null> {
+    // Use LPOP or BRPOP to atomically get the next job
+    const jobId = await this.redis.lpop(this.jobListKey);
+    if (!jobId) return null;
+
+    // Use SETNX to atomically claim the job
+    const claimed = await this.redis.setnx(`${this.keyPrefix}job:${jobId}:claimed`, instanceId);
+    if (!claimed) return null;
+
+    // Set TTL on the claim
+    await this.redis.expire(`${this.keyPrefix}job:${jobId}:claimed`, ttl);
+
+    // Get job details
+    const job = await this.getJob(jobId);
+    return job;
+  }
+
+  /**
+   * Complete a job
+   * 
+   * @param jobId - ID of the job to complete
+   * @param result - Result of the job
+   */
+  async completeJob(jobId: string, result: any): Promise<void> {
+    // Use MULTI/EXEC for atomic transaction
+    const multi = this.redis.multi();
+    multi.hset(`${this.keyPrefix}job:${jobId}`, 'status', 'completed', 'result', JSON.stringify(result));
+    multi.del(`${this.keyPrefix}job:${jobId}:claimed`);
+    await multi.exec();
+  }
+
+  /**
+   * Fail a job
+   * 
+   * @param jobId - ID of the job to fail
+   * @param error - Error message
+   */
+  async failJob(jobId: string, error: string): Promise<void> {
+    // Use MULTI/EXEC for atomic transaction
+    const multi = this.redis.multi();
+    multi.hset(`${this.keyPrefix}job:${jobId}`, 'status', 'failed', 'error', error);
+    multi.del(`${this.keyPrefix}job:${jobId}:claimed`);
+    await multi.exec();
+  }
 } 
