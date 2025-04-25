@@ -1,8 +1,21 @@
 import { Pool } from 'pg';
-import { JobStorage } from './index';
+import { JobStorage } from './base-storage';
 import { Job, JobStatus } from '../types';
 
-export class PostgreSQLJobStorage implements JobStorage {
+
+export interface PostgreSQLStorage extends JobStorage {
+    acquireNextJob(): Promise<Job | null>;
+    completeJob(jobId: string, result: any): Promise<void>;
+    failJob(jobId: string, error: string): Promise<void>;
+}
+
+/**
+ * PostgreSQL storage adapter for JobQueue
+ * 
+ * This storage adapter uses PostgreSQL to store jobs, making it suitable
+ * for distributed environments with multiple instances/processes.
+ */
+export class PostgreSQLJobStorage implements PostgreSQLStorage {
   private readonly pool: Pool;
   private readonly tableName: string;
   private initialized: boolean = false;
@@ -65,7 +78,9 @@ export class PostgreSQLJobStorage implements JobStorage {
    * Save a job to PostgreSQL
    */
   async saveJob(job: Job): Promise<void> {
-    await this.initialize();
+    if(!this.initialized) {
+      await this.initialize();
+    }
     await this.pool.query(
       `INSERT INTO ${this.tableName} (
         id, name, data, status, created_at, scheduled_at, retry_count
@@ -86,7 +101,9 @@ export class PostgreSQLJobStorage implements JobStorage {
    * Get a job by ID
    */
   async getJob(id: string): Promise<Job | null> {
-    await this.initialize();
+    if(!this.initialized) {
+      await this.initialize();
+    }
     const result = await this.pool.query(
       `SELECT * FROM ${this.tableName} WHERE id = $1`,
       [id]
@@ -103,7 +120,9 @@ export class PostgreSQLJobStorage implements JobStorage {
    * Get jobs by status
    */
   async getJobsByStatus(status: JobStatus): Promise<Job[]> {
-    await this.initialize();
+    if(!this.initialized) {
+      await this.initialize();
+    }
     const result = await this.pool.query(
       `SELECT * FROM ${this.tableName} WHERE status = $1`,
       [status]
@@ -116,7 +135,9 @@ export class PostgreSQLJobStorage implements JobStorage {
    * Update a job
    */
   async updateJob(job: Job): Promise<void> {
-    await this.initialize();
+    if(!this.initialized) {
+      await this.initialize();
+    }
     const result = await this.pool.query(
       `UPDATE ${this.tableName} SET
         name = $2,
@@ -149,75 +170,71 @@ export class PostgreSQLJobStorage implements JobStorage {
   }
 
   /**
-   * Acquire a job lock
-   * @param jobId - The ID of the job to lock
-   * @param ttl - Time to live in seconds
+   * Acquire the next pending job
+   * @returns The next pending job, or null if no pending jobs are available
    */
-  async acquireJobLock(jobId: string, ttl: number = 30): Promise<boolean> {
-    await this.initialize();
+  async acquireNextJob(): Promise<Job | null> {
+    if(!this.initialized) {
+      await this.initialize();
+    }
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-
-      const checkResult = await client.query(
-        `SELECT id FROM ${this.tableName} 
-         WHERE id = $1 AND (
-           lock_id IS NOT NULL AND 
-           lock_expires_at > NOW()
-         )`,
-        [jobId]
+      const query = await client.query(
+        `SELECT * FROM ${this.tableName} 
+        WHERE status = 'pending'
+        ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`
       );
-
-      // If job is locked, return false
-      if (checkResult.rows.length > 0) {
+      if(query.rows.length === 0) {
         await client.query('ROLLBACK');
-        return false;
+        return null;
       }
-
-      // Lock the job
-      const lockId = Math.random().toString(36).substring(2, 15);
-      const expiresAt = new Date(Date.now() + ttl * 1000);
-
+      const job = query.rows[0];
       await client.query(
-        `UPDATE ${this.tableName} SET
-          lock_id = $2,
-          lock_expires_at = $3
-         WHERE id = $1`,
-        [jobId, lockId, expiresAt]
+        `UPDATE ${this.tableName} SET status = 'processing', started_at = NOW() WHERE id = $1`,
+        [job.id]
       );
-
       await client.query('COMMIT');
-      return true;
+      return this.mapRowToJob(job);
     } catch (error) {
       await client.query('ROLLBACK');
-      return false;
+      return null;
     } finally {
       client.release();
     }
   }
-
   /**
-   * Release a job lock
-   * @param jobId - The ID of the job to unlock
+   * Complete a job
+   * @param jobId - The ID of the job to complete
+   * @param result - The result of the job
    */
-  async releaseJobLock(jobId: string): Promise<boolean> {
-    await this.initialize();
-    try {
-      const result = await this.pool.query(
-        `UPDATE ${this.tableName} SET
-          lock_id = NULL,
-          lock_expires_at = NULL
-         WHERE id = $1`,
-        [jobId]
-      );
-      return result.rowCount! > 0;
-    } catch (error) {
-      return false;
+  async completeJob(jobId: string, result: any): Promise<void> {
+    if(!this.initialized) {
+      await this.initialize();
     }
+    await this.pool.query(
+      `UPDATE ${this.tableName} SET status = 'completed', completed_at = NOW(), result = $2 WHERE id = $1`,
+      [jobId, JSON.stringify(result)]
+    );
   }
-
+  /**
+   * Fail a job
+   * @param jobId - The ID of the job to fail
+   * @param error - The error message
+   */
+  async failJob(jobId: string, error: string): Promise<void> {
+    if(!this.initialized) {
+      await this.initialize();
+    }
+    await this.pool.query(
+      `UPDATE ${this.tableName} SET status = 'failed', completed_at = NOW(), error = $2 WHERE id = $1`,
+      [jobId, error]
+    );
+  }
   /**
    * Map a database row to a Job object
+   * @param row - The database row to map
+   * @returns The mapped Job object
    */
   private mapRowToJob(row: any): Job {
     return {

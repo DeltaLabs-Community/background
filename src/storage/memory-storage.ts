@@ -1,5 +1,5 @@
 import { Job, JobStatus } from "../types";
-import { JobStorage } from "../storage";
+import { JobStorage } from "./base-storage";
 
 export class InMemoryJobStorage implements JobStorage {
     private jobs: Map<string, Job> = new Map();

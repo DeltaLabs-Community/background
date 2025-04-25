@@ -1,5 +1,5 @@
 import { Job, JobStatus } from "../types";
-import { JobStorage } from "../storage";
+import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
 
 /**
@@ -175,19 +175,27 @@ export class RedisJobStorage implements RedisStorage {
    * @returns The next job or null if no job is available
    */
   async acquireNextJob(instanceId: string, ttl: number): Promise<Job | null> {
-    // Use LPOP or BRPOP to atomically get the next job
-    const jobId = await this.redis.lpop(this.jobListKey);
+    const script = `
+      local jobId = redis.call('RPOPLPUSH', KEYS[1], KEYS[2])
+      if not jobId then
+        return nil
+      end
+      
+      redis.call('SET', KEYS[3] .. jobId .. ':claimed', ARGV[1], 'EX', ARGV[2])
+      return jobId
+    `;
+    const jobId = await this.redis.eval(
+      script,
+      3,  // Number of keys
+      this.jobListKey,
+      `${this.keyPrefix}processing`,
+      `${this.keyPrefix}job:`,
+      instanceId,
+      ttl.toString()
+    );
+    
     if (!jobId) return null;
-
-    // Use SETNX to atomically claim the job
-    const claimed = await this.redis.setnx(`${this.keyPrefix}job:${jobId}:claimed`, instanceId);
-    if (!claimed) return null;
-
-    // Set TTL on the claim
-    await this.redis.expire(`${this.keyPrefix}job:${jobId}:claimed`, ttl);
-
-    // Get job details
-    const job = await this.getJob(jobId);
+    const job = await this.getJob(jobId as string);
     return job;
   }
 

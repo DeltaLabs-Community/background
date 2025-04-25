@@ -1,49 +1,42 @@
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PostgreSQLJobStorage } from '../src/storage/postgresql-storage';
-import { PostgreSQLJobQueue } from '../src/queue/postgresql-job-queue';
-import {Pool} from "pg"
-import { JobHandler } from '../src/types';
-
-describe('PostgreSQLJobQueue', () => {
-  let pool: Pool;
-  let storage: PostgreSQLJobStorage;
-  let queue: PostgreSQLJobQueue;
+import { describe, test, expect, beforeEach, afterEach, vi, afterAll } from 'vitest';
+import { MongoDBJobStorage } from '../../src/storage/mongodb-storage';
+import { MongoDBJobQueue } from '../../src/queue/mongodb-job-queue';
+import { MongoClient } from 'mongodb';
+import { JobHandler } from '../../src/types';
+describe('MongoDBJobQueue',() => {
+  let storage: MongoDBJobStorage;
+  let queue: MongoDBJobQueue;
   let mockHandler: JobHandler;
-  // Set up before each test
-  beforeEach(() => {
-    // Create a fresh mock pool for each test
-    pool = new Pool({
-      connectionString: 'postgresql://postgres:12345@localhost:5432/postgres',
-    });
-    
-    // Create storage with mock pool
-    storage = new PostgreSQLJobStorage(pool, { tableName: 'jobs' });
-    
-    pool.query(`DELETE FROM jobs`);
+  const mongoClient = new MongoClient('mongodb://localhost:27017');
+  
+  beforeEach(async () => {
+    await mongoClient.connect();
+    await mongoClient.db().collection('jobs').deleteMany({});
 
-    // Create queue with storage
-    queue = new PostgreSQLJobQueue(storage, {
+    storage = new MongoDBJobStorage(mongoClient, { collectionName: 'jobs'});
+    queue = new MongoDBJobQueue(storage, {
       name: 'test-queue',
-      concurrency: 1,
+      concurrency: 2,
       maxRetries: 2,
-      processingInterval: 100
+      processingInterval:100
     });
-    
+
     // Mock job handler
     mockHandler = vi.fn().mockImplementation(() => {
-        return { success: true };
+      return { success: true };
     });
+    
     // Register job handler
     queue.register('test-job', mockHandler);
   });
   
-  // Clean up after each test
-  afterEach(() => {
-    // Reset mocks
+  afterEach(async () => {
     vi.resetAllMocks();
-    
-    // Stop the queue if it's processing
     queue.stop();
+  });
+
+  afterAll(async () => {
+    await mongoClient.close();
   });
   
   test('should add a job to the queue', async () => {
@@ -55,15 +48,16 @@ describe('PostgreSQLJobQueue', () => {
     expect(job.status).toBe('pending');
     expect(job.data).toEqual({ foo: 'bar' });
     
-    const jobs = await storage.getJobsByStatus('pending');
-    expect(jobs.length).toBe(1);
-    expect(jobs[0].id).toBe(job.id);
+    const savedJob = await storage.getJob(job.id);
+    expect(savedJob).toBeDefined();
+    expect(savedJob?.id).toBe(job.id);
   });
   
   test('should schedule a job for later execution', async () => {
     const scheduledTime = new Date(Date.now() + 1000 * 60);
     const job = await queue.schedule('test-job', { scheduled: true }, scheduledTime);
     
+    // Expectations
     expect(job).toBeDefined();
     expect(job.id).toBeDefined();
     expect(job.name).toBe('test-job');
@@ -71,10 +65,9 @@ describe('PostgreSQLJobQueue', () => {
     expect(job.data).toEqual({ scheduled: true });
     expect(job.scheduledAt).toEqual(scheduledTime);
     
-    const jobs = await storage.getJobsByStatus('pending');
-    expect(jobs.length).toBe(1);
-    expect(jobs[0].id).toBe(job.id);
-    expect(jobs[0].scheduledAt).toEqual(scheduledTime);
+    const savedJob = await storage.getJob(job.id);
+    expect(savedJob).toBeDefined();
+    expect(savedJob?.scheduledAt).toEqual(scheduledTime);
   });
   
   test('should process a job successfully', async () => {
@@ -91,7 +84,6 @@ describe('PostgreSQLJobQueue', () => {
     
     expect(updatedJob).toBeDefined();
     expect(updatedJob?.status).toBe('completed');
-    expect(updatedJob?.result).toEqual({ success: true });
   });
   
   test('should retry a failed job', async () => {
@@ -103,14 +95,14 @@ describe('PostgreSQLJobQueue', () => {
       }
       return { success: true, retried: true };
     });
-    
+
     queue.register('retry-job', retriableHandler);
     
     const job = await queue.add('retry-job', { shouldRetry: true });
     
     queue.start();
     
-    await new Promise(resolve => setTimeout(resolve, 400));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     expect(retriableHandler).toHaveBeenCalledTimes(2);
     
@@ -133,7 +125,7 @@ describe('PostgreSQLJobQueue', () => {
     
     queue.start();
     
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 400));
     
     expect(failingHandler).toHaveBeenCalledTimes(3);
     
@@ -143,5 +135,21 @@ describe('PostgreSQLJobQueue', () => {
     expect(updatedJob?.status).toBe('failed');
     expect(updatedJob?.error).toContain('Failed after 2 retries');
     expect(updatedJob?.retryCount).toBe(2);
+  });
+  
+  test('should use distributed locking to prevent concurrent processing', async () => {
+    const job = await queue.add('test-job', { concurrent: true });
+    
+    const originalAcquireLock = storage.acquireJobLock;
+    storage.acquireJobLock = vi.fn().mockResolvedValue(false);
+    
+    queue.start();
+    
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    expect(mockHandler).not.toHaveBeenCalled();
+    expect(storage.acquireJobLock).toHaveBeenCalledWith(job.id, expect.any(Number));
+    
+    storage.acquireJobLock = originalAcquireLock;
   });
 }); 

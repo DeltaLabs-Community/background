@@ -1,8 +1,24 @@
 import { Collection, MongoClient } from "mongodb";
-import { JobStorage } from ".";
+import { JobStorage } from "./base-storage";
 import { Job, JobStatus } from "../types";
 
-export class MongoDBJobStorage implements JobStorage {
+/**
+ * MongoDB storage adapter for JobQueue
+ * 
+ * This storage adapter uses MongoDB to store jobs, making it suitable
+ * for distributed environments with multiple instances/processes.
+ * 
+ * Note: You must install the 'mongodb' package to use this adapter:
+ * npm install mongodb
+ */
+
+export interface MongoDBStorage extends JobStorage {
+    acquireNextJob(): Promise<Job | null>;
+    completeJob(jobId: string, result: any): Promise<void>;
+    failJob(jobId: string, error: string): Promise<void>;
+}
+
+export class MongoDBJobStorage implements MongoDBStorage {
     private readonly collection: Collection<Job>;
     private readonly mongoClient: MongoClient;
     
@@ -10,7 +26,6 @@ export class MongoDBJobStorage implements JobStorage {
         this.mongoClient = mongoClient;
         this.collection = this.mongoClient.db().collection(options.collectionName || "jobs");
     }
-
     /**
      * Save a job
      * @param job - The job to save
@@ -73,5 +88,94 @@ export class MongoDBJobStorage implements JobStorage {
     async releaseJobLock(jobId: string): Promise<boolean> {
         await this.collection.updateOne({ id: jobId }, { $unset: { lock: 1 } });
         return true;
+    }
+
+    /**
+     * Acquire the next pending job
+     * @returns The next pending job, or null if no pending jobs are available
+     */
+    async acquireNextJob(): Promise<Job | null> {
+        const session = this.mongoClient.startSession();
+        try {
+            session.startTransaction({
+                readPreference: "primary",
+                readConcern: {
+                    level: "local"
+                }
+            });
+            const job = await this.collection.findOneAndUpdate(
+                { status: "pending" },
+                { $set: { status: "processing", startedAt: new Date() } },
+                {
+                    session,
+                    returnDocument: "after"
+                }
+            );
+            if (!job) {
+                await session.abortTransaction();
+                return null;
+            }
+            await session.commitTransaction();
+            return job;
+        } catch (error) {
+            await session.abortTransaction();
+            return null;
+        } finally {
+            await session.endSession();
+        }
+    }
+    /**
+     * Complete a job
+     * @param jobId - The ID of the job to complete
+     * @param result - The result of the job
+     */
+    async completeJob(jobId: string, result: any): Promise<void> {
+        const session = this.mongoClient.startSession();
+        try {
+            session.startTransaction({
+                readPreference: "primary",
+                readConcern: {
+                    level: "local"
+                }
+            });
+            await this.collection.updateOne(
+                { id: jobId, status: "processing" },
+                { $set: { status: "completed", result, completedAt: new Date() } },
+                { session }
+            );
+            await session.commitTransaction();
+        } catch (error) {
+            await session.abortTransaction();
+            throw error;
+        } finally {
+            await session.endSession();
+        }
+    }
+    /**
+     * Fail a job
+     * @param jobId - The ID of the job to fail
+     * @param error - The error message
+     */
+    async failJob(jobId: string, error: string): Promise<void> {
+        const session = this.mongoClient.startSession();
+        try {
+            session.startTransaction({
+                readPreference: "primary",
+                readConcern: {
+                    level: "local"
+                }
+            });
+            await this.collection.updateOne(
+                { id: jobId, status: "processing" },
+                { $set: { status: "failed", error, completedAt: new Date() } },
+                { session }
+            );
+            await session.commitTransaction();
+        } catch (error) {
+            await session.abortTransaction();
+            throw error;
+        } finally {
+            await session.endSession();
+        }
     }
 }
