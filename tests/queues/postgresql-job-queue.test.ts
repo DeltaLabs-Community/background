@@ -16,7 +16,6 @@ describe('PostgreSQLJobQueue', () => {
       connectionString: process.env.TEST_POSTGRESQL_URL || 'postgresql://postgres:12345@localhost:5432/postgres',
     });
     storage = new PostgreSQLJobStorage(pool, { tableName: 'jobs' });
-    pool.query(`DELETE FROM jobs`);
     queue = new PostgreSQLJobQueue(storage, {
       name: 'test-queue',
       concurrency: 1,
@@ -39,8 +38,10 @@ describe('PostgreSQLJobQueue', () => {
     
     // Stop the queue if it's processing
     queue.stop();
+    pool.query(`DELETE FROM jobs`);
+
   });
-  
+
   afterAll(() => {
     pool.end();
   });

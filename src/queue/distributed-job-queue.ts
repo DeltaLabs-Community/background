@@ -8,7 +8,6 @@ import { RedisStorage } from "../storage/redis-storage";
  * capabilities across multiple instances/processes using Redis atomic operations.
  */
 export class DistributedJobQueue extends JobQueue {
-  private readonly instanceId: string;
   private readonly redisStorage: RedisStorage;
   private readonly jobTTL: number = 30; // seconds
   
@@ -23,24 +22,14 @@ export class DistributedJobQueue extends JobQueue {
     options: { 
       concurrency?: number;
       name?: string;
-      instanceId?: string;
       jobTTL?: number;
       processingInterval?: number;
       maxRetries?: number;
     } = {}
   ) {
     super(storage, options);
-    
     this.redisStorage = storage;
-    this.instanceId = options.instanceId || generateId(8);
     this.jobTTL = options.jobTTL || 30;
-  }
-  
-  /**
-   * Get the unique instance ID for this worker
-   */
-  getInstanceId(): string {
-    return this.instanceId;
   }
   
   /**
@@ -50,19 +39,35 @@ export class DistributedJobQueue extends JobQueue {
   protected async processNextBatch(): Promise<void> {
     // Skip if we're already processing the maximum number of jobs
     if (this.activeJobs.size >= this.concurrency) {
+      console.log(`Already at max concurrency (${this.concurrency}), skipping batch.`);
       return;
     }
+    
     const availableSlots = this.concurrency - this.activeJobs.size;
+
     // Try to acquire jobs atomically
+    const processingPromises: Promise<void>[] = [];
+    
     for (let i = 0; i < availableSlots; i++) {
-      const job = await this.redisStorage.acquireNextJob(this.instanceId, this.jobTTL);
-      if (!job) {
-        break; // No more jobs available
+      try {
+        const job = await this.redisStorage.acquireNextJob(this.jobTTL);
+        if (!job) {
+          break; // No more jobs available
+        }
+        this.activeJobs.add(job.id);
+        // Create a promise for processing this job
+        const processingPromise = this.processJob(job)
+          .catch(error => {
+            console.error(`Error processing job ${job.id}:`, error);
+          })
+          .finally(() => {
+            this.activeJobs.delete(job.id);
+          });
+        
+        processingPromises.push(processingPromise);
+      } catch (error) {
+        console.error('Error acquiring job:', error);
       }
-      this.activeJobs.add(job.id);
-      this.processJob(job).finally(() => {
-        this.activeJobs.delete(job.id);
-      });
     }
   }
   
@@ -77,7 +82,7 @@ export class DistributedJobQueue extends JobQueue {
     } catch (error) {
       // Mark job as failed atomically
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.redisStorage.failJob(job.id, this.instanceId, errorMessage);
+      await this.redisStorage.failJob(job.id, errorMessage);
       this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
       throw error;
     }

@@ -1,5 +1,5 @@
 {
-  "name": "pulse",
+  "name": "pulsejs",
   "version": "0.1.0",
   "description": "An extendible background job queue for js/ts applications",
   "type": "commonjs",
@@ -10,15 +10,11 @@
     "build:node": "tsc -p tsconfig.node.json",
     "build:deno": "tsc -p tsconfig.deno.json",
     "build:bun": "tsc -p tsconfig.bun.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "test:node": "vitest run",
     "test:bun": "bun test",
-    "test:redis": "vitest run tests/storages/redis-storage.test.ts",
+    "test:redis-storage": "vitest run tests/storages/redis-storage.test.ts",
+    "test:storage": "vitest run tests/storages/in-memory-storage.test.ts",
     "test:distributed": "vitest run tests/queues/distributed-job-queue.test.ts",
     "test:queue": "vitest run tests/queues/job-queue.test.ts",
-    "test:storage": "vitest run tests/storages/in-memory-storage.test.ts",
     "test:postgresql": "vitest run tests/queues/postgresql-job-queue.test.ts",
     "test:mongodb": "vitest run tests/queues/mongodb-job-queue.test.ts",
     "clean": "rimraf dist"
@@ -26,6 +22,7 @@
   "keywords": [
     "background-jobs",
     "queue",
+    "pulsejs",
     "bun",
     "node"
   ],

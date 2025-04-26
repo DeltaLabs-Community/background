@@ -46,6 +46,9 @@ describe('MongoDBJobQueue',() => {
   afterEach(async () => {
     vi.resetAllMocks();
     queue.stop();
+  });
+
+  afterAll(async () => {
     await mongoClient.close();
   });
   
@@ -145,5 +148,19 @@ describe('MongoDBJobQueue',() => {
     expect(updatedJob?.status).toBe('failed');
     expect(updatedJob?.error).toContain('Failed after 2 retries');
     expect(updatedJob?.retryCount).toBe(2);
+  });
+  test('should handle job priority', async () => {
+    await queue.add('test-job', { priority: 10 }, { priority: 10 });
+    await queue.add('test-job', { priority: 1 }, { priority: 1 });
+    
+    const priorityHandler = vi.fn().mockImplementation(({priority}:{priority:number}) => {
+      return { success: true, priority };
+    });
+
+    queue.register('test-job', priorityHandler);
+    queue.start();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    expect(priorityHandler).toHaveBeenNthCalledWith(1, { priority: 1 });
+    expect(priorityHandler).toHaveBeenNthCalledWith(2, { priority: 10 });
   });
 }); 

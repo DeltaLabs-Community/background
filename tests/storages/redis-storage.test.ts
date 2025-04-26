@@ -15,6 +15,7 @@ describe('RedisJobStorage', () => {
       db: 0,
     });
     storage = new RedisJobStorage(redis, { keyPrefix: 'test:' });
+    redis.flushall();
     testJob = {
       id: 'test-job-1',
       name: 'test-job',
@@ -85,4 +86,75 @@ describe('RedisJobStorage', () => {
     
     await expect(storage.updateJob(nonExistentJob)).rejects.toThrow();
   });
+
+  it('should get jobs by priority', async () => {
+    const highPriorityJob = { ...testJob, id: 'high-priority', priority: 1 };
+    const mediumPriorityJob = { ...testJob, id: 'medium-priority', priority: 5 };
+    const lowPriorityJob = { ...testJob, id: 'low-priority', priority: 10 };
+
+    await storage.saveJob(highPriorityJob);
+    await storage.saveJob(mediumPriorityJob);
+    await storage.saveJob(lowPriorityJob);
+
+    const highPriorityJobs = await storage.getJobsByPriority(1);
+    expect(highPriorityJobs).toHaveLength(1);
+    expect(highPriorityJobs[0].id).toBe('high-priority');
+    
+    const mediumPriorityJobs = await storage.getJobsByPriority(5);
+    expect(mediumPriorityJobs).toHaveLength(1);
+    expect(mediumPriorityJobs[0].id).toBe('medium-priority');
+
+    const lowPriorityJobs = await storage.getJobsByPriority(10);
+    expect(lowPriorityJobs).toHaveLength(1);
+    expect(lowPriorityJobs[0].id).toBe('low-priority');
+  });
+
+  it('should get scheduled jobs within a time range', async () => {
+    const scheduledJob1 = { ...testJob, id: 'scheduled-1', scheduledAt: new Date(Date.now() + 1000) };
+    const scheduledJob2 = { ...testJob, id: 'scheduled-2', scheduledAt: new Date(Date.now() + 2000) };
+
+    await storage.saveJob(scheduledJob1);
+    await storage.saveJob(scheduledJob2);
+
+    const scheduledJobs = await storage.getScheduledJobs(new Date(Date.now() - 1000), new Date(Date.now() + 3000));
+    expect(scheduledJobs).toHaveLength(2);
+    expect(scheduledJobs.map(job => job.id)).toContain('scheduled-1');
+    expect(scheduledJobs.map(job => job.id)).toContain('scheduled-2');
+  });
+
+  it('should fail a job', async () => {
+    await storage.saveJob(testJob);
+    await storage.failJob(testJob.id, 'test error');
+    const retrievedJob = await storage.getJob(testJob.id);
+    expect(retrievedJob?.status).toBe('failed');
+    expect(retrievedJob?.error).toBe('test error');
+  });
+
+  it('should complete a job', async () => {
+    await storage.saveJob(testJob);
+    await storage.completeJob(testJob.id, { success: true });
+    const retrievedJob = await storage.getJob(testJob.id);
+    expect(retrievedJob?.status).toBe('completed');
+    expect(retrievedJob?.result).toEqual({ success: true });
+  });
+
+  it('should acquire a job', async () => {
+    await storage.saveJob(testJob);
+    const acquiredJob = await storage.acquireNextJob();
+    expect(acquiredJob?.id).toBe(testJob.id);
+  });
+  
+  it('should acquire a job with priority', async () => {
+    const highPriorityJob = { ...testJob, id: 'high-priority', priority: 1 };
+    const mediumPriorityJob = { ...testJob, id: 'medium-priority', priority: 5 };
+    const lowPriorityJob = { ...testJob, id: 'low-priority', priority: 10 };
+    await storage.saveJob(highPriorityJob);
+    await storage.saveJob(mediumPriorityJob); 
+    await storage.saveJob(lowPriorityJob);
+    const acquiredJob = await storage.acquireNextJob();
+    expect(acquiredJob?.id).toBe('high-priority');
+  });
+  
+  
+
 }); 

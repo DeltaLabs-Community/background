@@ -12,18 +12,17 @@ describe('DistributedJobQueue', () => {
   let queue: DistributedJobQueue;
   let mockHandler: JobHandler;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dotenv.config();
     redis = new Redis(process.env.TEST_REDIS_URL || 'redis://localhost:6379');
     storage = new RedisJobStorage(redis, { keyPrefix: 'test:' });
+    await storage.clear();
     mockHandler = vi.fn().mockImplementation(() => {
-        console.log('mockHandler called');
         return { success: true };
     });
     queue = new DistributedJobQueue(storage, { 
       concurrency: 1, 
       name: 'worker-1',
-      instanceId: 'instance-1',
       processingInterval: 100
     });    
     queue.register('test-job', mockHandler);
@@ -34,17 +33,10 @@ describe('DistributedJobQueue', () => {
     vi.restoreAllMocks();
   });
 
-  it('should have a unique instance ID', () => {
-    expect(queue.getInstanceId()).toBe('instance-1');
-    const autoIdQueue = new DistributedJobQueue(storage);
-    expect(autoIdQueue.getInstanceId()).toBeDefined();
-    expect(autoIdQueue.getInstanceId().length).toBeGreaterThan(0);
-  });
-
   it('should process jobs with locking', async () => {
     const job = await queue.add('test-job', { message: 'Hello, World!' });
     queue.start();
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 250));
     expect(mockHandler).toHaveBeenCalledWith({ message: 'Hello, World!' });
     const processedJob = await storage.getJob(job.id);
     expect(processedJob?.status).toBe('completed');
@@ -66,12 +58,10 @@ describe('DistributedJobQueue', () => {
     const concurrentQueue = new DistributedJobQueue(storage, {
       concurrency: 2,
       name: 'worker-2',
-      instanceId: 'instance-2',
       processingInterval: 100
     });
 
     const eventListener = vi.fn().mockImplementation((event: QueueEvent) => {
-      console.log('eventListener called', event);
     });
 
     concurrentQueue.addEventListener('completed', eventListener);
@@ -81,9 +71,19 @@ describe('DistributedJobQueue', () => {
     concurrentQueue.add('test-job', { message: 'Hello, World!' });
     concurrentQueue.add('test-job', { message: 'Hello, World!' });
     concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    
     // Start the queue
     concurrentQueue.start();
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise(resolve => setTimeout(resolve, 200));
     expect(mockHandler).toHaveBeenCalledTimes(2);
     expect(eventListener).toHaveBeenCalledTimes(2);
   });
