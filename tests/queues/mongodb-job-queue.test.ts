@@ -85,7 +85,7 @@ describe('MongoDBJobQueue',() => {
     
     queue.start();
     
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 200));
     
     expect(mockHandler).toHaveBeenCalledTimes(1);
     expect(mockHandler).toHaveBeenCalledWith({ process: true });
@@ -112,7 +112,7 @@ describe('MongoDBJobQueue',() => {
     
     queue.start();
     
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     expect(retriableHandler).toHaveBeenCalledTimes(2);
     
@@ -135,7 +135,7 @@ describe('MongoDBJobQueue',() => {
     
     queue.start();
     
-    await new Promise(resolve => setTimeout(resolve, 4000));
+    await new Promise(resolve => setTimeout(resolve, 400));
     
     expect(failingHandler).toHaveBeenCalledTimes(3);
     

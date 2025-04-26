@@ -12,6 +12,7 @@ export interface Job<T = any> {
   startedAt?: Date;
   completedAt?: Date;
   error?: string;
+  priority?: number;
   result?: any;
   retryCount?: number;
 }

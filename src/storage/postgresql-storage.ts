@@ -50,11 +50,9 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           started_at TIMESTAMP WITH TIME ZONE,
           completed_at TIMESTAMP WITH TIME ZONE,
           error TEXT,
+          priority INTEGER DEFAULT 0,
           result JSONB,
-          retry_count INTEGER DEFAULT 0,
-          lock_id TEXT,
-          lock_expires_at TIMESTAMP WITH TIME ZONE
-        )
+          retry_count INTEGER DEFAULT 0)
       `);
 
       await client.query(`
@@ -83,8 +81,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
     }
     await this.pool.query(
       `INSERT INTO ${this.tableName} (
-        id, name, data, status, created_at, scheduled_at, retry_count
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        id, name, data, status, created_at, scheduled_at, retry_count, priority
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         job.id,
         job.name,
@@ -92,7 +90,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.status,
         job.createdAt,
         job.scheduledAt || null,
-        job.retryCount || 0
+        job.retryCount || 0,
+        job.priority || 0
       ]
     );
   }
@@ -148,7 +147,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         completed_at = $7,
         error = $8,
         result = $9,
-        retry_count = $10
+        retry_count = $10,
+        priority = $11
       WHERE id = $1`,
       [
         job.id,
@@ -160,7 +160,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.completedAt || null,
         job.error || null,
         job.result ? JSON.stringify(job.result) : null,
-        job.retryCount || 0
+        job.retryCount || 0,
+        job.priority || 0
       ]
     );
 
@@ -180,17 +181,22 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Use the server's current time for the scheduled_at check
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
         WHERE status = 'pending' OR (scheduled_at IS NOT NULL AND scheduled_at <= $1)
-        ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
         [new Date()]
       );
+      
       if(query.rows.length === 0) {
         await client.query('ROLLBACK');
         return null;
       }
+      
       const job = query.rows[0];
+      
       await client.query(
         `UPDATE ${this.tableName} SET status = 'processing', started_at = $1 WHERE id = $2`,
         [new Date(), job.id]

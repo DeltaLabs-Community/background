@@ -58,11 +58,7 @@ export class MongoDBJobStorage implements MongoDBStorage {
      * @throws Error if the job is not found
      */
     async updateJob(job: Job): Promise<void> {
-        const oldJob = await this.getJob(job.id);
-        if (!oldJob) {
-            throw new Error(`Job with ID ${job.id} not found`);
-        }
-        await this.collection.updateOne({ id: job.id }, { $set: job });
+        await this.collection.findOneAndUpdate({ id: job.id }, { $set: job });
     }
 
     /**
@@ -86,7 +82,7 @@ export class MongoDBJobStorage implements MongoDBStorage {
                     }
                 },
                 { 
-                    sort: { createdAt: 1 },
+                    sort: { priority: 1, createdAt: 1 },
                     returnDocument: "before" 
                 }
             );

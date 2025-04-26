@@ -41,17 +41,18 @@ export class JobQueue extends EventTarget{
     }
     
     // Add a job to the queue
-    async add<T>(name: string, data: T): Promise<Job<T>> {
+    async add<T>(name: string, data: T,options?:{priority?: number}): Promise<Job<T>> {
       if (!this.handlers.has(name)) {
         throw new Error(`Job handler for "${name}" not registered`);
       }
-      
+      const priority = options?.priority || 0;
       const job: Job<T> = {
         id: generateId(),
         name,
         data,
         status: 'pending',
         createdAt: new Date(),
+        priority,
       };
       
       await this.storage.saveJob(job);
