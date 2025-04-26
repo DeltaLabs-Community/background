@@ -1,12 +1,10 @@
-import { JobStorage } from "../storage";
+import { JobStorage } from "../storage/base-storage";
 import { JobQueue } from "./job-queue";
 import { PostgreSQLJobStorage } from "../storage/postgresql-storage";
 import { Job, JobStatus } from "../types";
 
 export class PostgreSQLJobQueue extends JobQueue {
     private readonly postgresStorage: PostgreSQLJobStorage;
-    private readonly lockTTL: number = 30; // seconds
-    
     /**
      * Create a PostgreSQL job queue
      * 
@@ -14,7 +12,6 @@ export class PostgreSQLJobQueue extends JobQueue {
      * @param options - Configuration options
      */
     constructor(storage: JobStorage, options: { 
-        lockTTL?: number, 
         concurrency?: number, 
         maxRetries?: number,
         name?: string,
@@ -22,7 +19,6 @@ export class PostgreSQLJobQueue extends JobQueue {
     } = {}) {
         super(storage, options);
         this.postgresStorage = storage as PostgreSQLJobStorage;
-        this.lockTTL = options.lockTTL || 30;
         this.concurrency = options.concurrency || 1;
     }
     
@@ -31,8 +27,20 @@ export class PostgreSQLJobQueue extends JobQueue {
      * Override the parent's protected method
      */
     protected async processNextBatch(): Promise<void> {
-        // Use the parent implementation to get jobs that need processing
-        await super.processNextBatch();
+        if(this.activeJobs.size >= this.concurrency) {
+            return;
+        }
+        const availableSlots = this.concurrency - this.activeJobs.size;
+        for(let i = 0; i < availableSlots; i++) {
+            const job = await this.postgresStorage.acquireNextJob();
+            if(!job) {
+                break;
+            }
+            this.activeJobs.add(job.id);
+            this.processJob(job).finally(() => {
+                this.activeJobs.delete(job.id);
+            });
+        }
     }
 
     /**
@@ -40,19 +48,10 @@ export class PostgreSQLJobQueue extends JobQueue {
      * This is called by the parent class
      */
     protected async processJob(job: Job): Promise<void> {
-        // Try to acquire a lock on the job
-        const lockAcquired = await this.postgresStorage.acquireJobLock(
-            job.id,
-            this.lockTTL
-        );
-        if (!lockAcquired) {
-            return;
-        }
         try {
             await super.processJob(job);
         } catch (error) {
             const retryCount = job.retryCount || 0;
-            
             if (retryCount < this.maxRetries) {
                 const updatedJob: Job = { 
                     ...job, 
@@ -67,8 +66,6 @@ export class PostgreSQLJobQueue extends JobQueue {
                 job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
                 await this.postgresStorage.updateJob(job);
             }
-        } finally {
-            await this.postgresStorage.releaseJobLock(job.id);
         }
     }
 } 

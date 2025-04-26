@@ -182,8 +182,9 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       await client.query('BEGIN');
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
-        WHERE status = 'pending'
-        ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`
+        WHERE status = 'pending' OR (scheduled_at IS NOT NULL AND scheduled_at <= $1)
+        ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [new Date()]
       );
       if(query.rows.length === 0) {
         await client.query('ROLLBACK');
@@ -191,8 +192,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       }
       const job = query.rows[0];
       await client.query(
-        `UPDATE ${this.tableName} SET status = 'processing', started_at = NOW() WHERE id = $1`,
-        [job.id]
+        `UPDATE ${this.tableName} SET status = 'processing', started_at = $1 WHERE id = $2`,
+        [new Date(), job.id]
       );
       await client.query('COMMIT');
       return this.mapRowToJob(job);

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { DistributedJobQueue } from '../src/queue/distributed-job-queue';
-import { RedisJobStorage } from '../src/storage/redis-storage';
-import { JobHandler } from '../src/types';
+import { DistributedJobQueue } from '../../src/queue/distributed-job-queue';
+import { RedisJobStorage } from '../../src/storage/redis-storage';
+import { JobHandler } from '../../src/types';
 import Redis from 'ioredis';
+import { QueueEvent } from '../../src/utils/queue-event';
+import dotenv from 'dotenv';
 
 describe('DistributedJobQueue', () => {
   let redis: Redis;
@@ -11,7 +13,8 @@ describe('DistributedJobQueue', () => {
   let mockHandler: JobHandler;
 
   beforeEach(() => {
-    redis = new Redis('redis://localhost:6379');
+    dotenv.config();
+    redis = new Redis(process.env.TEST_REDIS_URL || 'redis://localhost:6379');
     storage = new RedisJobStorage(redis, { keyPrefix: 'test:' });
     mockHandler = vi.fn().mockImplementation(() => {
         console.log('mockHandler called');
@@ -33,7 +36,6 @@ describe('DistributedJobQueue', () => {
 
   it('should have a unique instance ID', () => {
     expect(queue.getInstanceId()).toBe('instance-1');
-    
     const autoIdQueue = new DistributedJobQueue(storage);
     expect(autoIdQueue.getInstanceId()).toBeDefined();
     expect(autoIdQueue.getInstanceId().length).toBeGreaterThan(0);
@@ -41,61 +43,48 @@ describe('DistributedJobQueue', () => {
 
   it('should process jobs with locking', async () => {
     const job = await queue.add('test-job', { message: 'Hello, World!' });
-    
     queue.start();
-
     await new Promise(resolve => setTimeout(resolve, 1000));
-
     expect(mockHandler).toHaveBeenCalledWith({ message: 'Hello, World!' });
-    
     const processedJob = await storage.getJob(job.id);
     expect(processedJob?.status).toBe('completed');
   });
 
-  it('should prevent duplicate processing across instances', async () => {
-    storage.acquireJobLock = vi.fn().mockResolvedValue(false);
-
-    const job = await queue.add('test-job', { message: 'Hello, World!' });
+  it('should schedule jobs for later execution', async () => {
+    const scheduledTime = new Date(Date.now() + 1000 * 60);
+    const job = await queue.schedule('test-job', { scheduled: true }, scheduledTime);
     
-    queue.start();
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    expect(mockHandler).not.toHaveBeenCalled();
-    
-    expect(storage.acquireJobLock).toHaveBeenCalled();
+    expect(job).toBeDefined();
+    expect(job.id).toBeDefined();
+    expect(job.name).toBe('test-job');
+    expect(job.status).toBe('pending');
+    expect(job.data).toEqual({ scheduled: true });
+    expect(job.scheduledAt).toEqual(scheduledTime);
   });
 
-  it('should always release locks after processing', async () => {
-    const releaseSpy = vi.spyOn(storage, 'releaseJobLock');
-    
-    await queue.add('test-job', { message: 'Hello, World!' });
-    
-    queue.start();
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    expect(releaseSpy).toHaveBeenCalledWith(expect.any(String), 'instance-1');
-  });
+  it('should process jobs concurrently', async () => {
+    const concurrentQueue = new DistributedJobQueue(storage, {
+      concurrency: 2,
+      name: 'worker-2',
+      instanceId: 'instance-2',
+      processingInterval: 100
+    });
 
-  it('should release locks even when job processing fails', async () => {
-    const errorHandler = vi.fn().mockRejectedValue(new Error('Processing failed'));
-    queue.register('error-job', errorHandler);
-    
-    const releaseSpy = vi.spyOn(storage, 'releaseJobLock');
-    
-    const job = await queue.add('error-job', { message: 'Will fail' });
-    
-    queue.start();
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    expect(errorHandler).toHaveBeenCalled();
-    
-    const failedJob = await storage.getJob(job.id);
-    expect(failedJob?.status).toBe('failed');
-    expect(failedJob?.error).toBe('Processing failed');
-    
-    expect(releaseSpy).toHaveBeenCalled();
+    const eventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      console.log('eventListener called', event);
+    });
+
+    concurrentQueue.addEventListener('completed', eventListener);
+    // Register handler for the job
+    concurrentQueue.register('test-job', mockHandler);
+    // Add jobs to the queue
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    concurrentQueue.add('test-job', { message: 'Hello, World!' });
+    // Start the queue
+    concurrentQueue.start();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    expect(mockHandler).toHaveBeenCalledTimes(2);
+    expect(eventListener).toHaveBeenCalledTimes(2);
   });
 }); 

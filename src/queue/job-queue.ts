@@ -1,5 +1,5 @@
 import { Job } from "../types";
-import { JobStorage } from "../storage/index";
+import { JobStorage } from "../storage/base-storage";
 import { JobHandler } from "../types";
 import { generateId } from "../utils/id-generator";
 import { QueueEvent } from "../utils/queue-event";
@@ -194,6 +194,7 @@ export class JobQueue extends EventTarget{
         job.completedAt = new Date();
         job.error = error instanceof Error ? error.message : String(error);
         await this.storage.updateJob(job);
+        this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
         throw error;
       }
     }

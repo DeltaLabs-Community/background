@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { RedisJobStorage } from '../src/storage/redis-storage';
-import { Job, JobStatus } from '../src/types';
+import { RedisJobStorage } from '../../src/storage/redis-storage';
+import { Job, JobStatus } from '../../src/types';
 import Redis from 'ioredis';
 
 describe('RedisJobStorage', () => {
@@ -84,27 +84,5 @@ describe('RedisJobStorage', () => {
     };
     
     await expect(storage.updateJob(nonExistentJob)).rejects.toThrow();
-  });
-
-  it('should handle job locking for distributed processing', async () => {
-    // Should acquire lock successfully
-    const lockAcquired = await storage.acquireJobLock('job-1', 'worker-1', 30);
-    expect(lockAcquired).toBe(true);
-    
-    // Should fail to acquire lock for same job
-    const lockAcquired2 = await storage.acquireJobLock('job-1', 'worker-2', 30);
-    expect(lockAcquired2).toBe(false);
-    
-    // Should release lock successfully
-    const lockReleased = await storage.releaseJobLock('job-1', 'worker-1');
-    expect(lockReleased).toBe(true);
-    
-    // Should fail to release lock for non-owned job
-    const lockReleased2 = await storage.releaseJobLock('job-1', 'worker-2');
-    expect(lockReleased2).toBe(false);
-    
-    // Should acquire lock after release
-    const lockAcquired3 = await storage.acquireJobLock('job-1', 'worker-2', 30);
-    expect(lockAcquired3).toBe(true);
   });
 }); 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { InMemoryJobStorage } from '../src/storage/memory-storage';
-import { Job, JobStatus } from '../src/types';
+import { InMemoryJobStorage } from '../../src/storage/memory-storage';
+import { Job, JobStatus } from '../../src/types';
 
 describe('InMemoryJobStorage', () => {
   let storage: InMemoryJobStorage;

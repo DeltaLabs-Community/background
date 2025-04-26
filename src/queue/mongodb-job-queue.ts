@@ -1,15 +1,13 @@
-import { JobStorage } from "../storage";
+import { JobStorage } from "../storage/base-storage";
 import { JobQueue } from "./job-queue";
 import { MongoDBJobStorage } from "../storage/mongodb-storage";
 import { Job, JobStatus } from "../types";
 
 export class MongoDBJobQueue extends JobQueue {
     private readonly mongodbStorage: MongoDBJobStorage;
-    private readonly lockTTL: number = 30; // seconds
-    constructor(storage: JobStorage, options: { lockTTL?: number, concurrency?: number, maxRetries?: number,name?: string, processingInterval?: number } = {}) {
+    constructor(storage: JobStorage, options: {concurrency?: number, maxRetries?: number,name?: string, processingInterval?: number } = {}) {
         super(storage, options);
         this.mongodbStorage = storage as MongoDBJobStorage;
-        this.lockTTL = options.lockTTL || 30;
         this.concurrency = options.concurrency || 1;
     }
     /**
@@ -17,8 +15,24 @@ export class MongoDBJobQueue extends JobQueue {
      * Override the parent's protected method
      */
     protected async processNextBatch(): Promise<void> {
-        // Use the parent implementation to get jobs that need processing
-        await super.processNextBatch();
+        if(this.activeJobs.size >= this.concurrency) {
+            return;
+        }
+        const availableSlots = this.concurrency - this.activeJobs.size;
+        for(let i = 0; i < availableSlots; i++) {
+            const job = await this.mongodbStorage.acquireNextJob();
+            if(!job) {
+              break;
+            }
+            this.activeJobs.add(job.id);
+            this.processJob(job)
+            .catch((error) => {
+                console.error("Error processing job", error);
+            })
+            .finally(() => {
+                this.activeJobs.delete(job.id);
+            });
+        }
     }
 
       /**
@@ -26,18 +40,11 @@ export class MongoDBJobQueue extends JobQueue {
    * This is called by the parent class
    */
   protected async processJob(job: Job): Promise<void> {
-    const lockAcquired = await this.mongodbStorage.acquireJobLock(
-      job.id,
-      this.lockTTL
-    );
-    if (!lockAcquired) {
-      return;
-    }
     try {
       await super.processJob(job);
     } catch (error) {
       const retryCount = job.retryCount || 0;
-      
+      // Retry job if it has not failed too many times
       if (retryCount < this.maxRetries) {
         const updatedJob: Job = { 
           ...job, 
@@ -52,8 +59,6 @@ export class MongoDBJobQueue extends JobQueue {
         job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
         await this.mongodbStorage.updateJob(job);
       }
-    } finally {
-      await this.mongodbStorage.releaseJobLock(job.id);
-    }
+    } 
   }
 }

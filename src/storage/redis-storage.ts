@@ -124,39 +124,6 @@ export class RedisJobStorage implements RedisStorage {
     await pipeline.exec();
   }
 
-  /**
-   * Acquire a lock on a job to prevent race conditions in distributed environments
-   * 
-   * @param jobId - ID of the job to lock
-   * @param instanceId - Unique ID of this worker instance
-   * @param ttl - Time-to-live for the lock in seconds
-   * @returns True if lock was acquired, false otherwise
-   */
-  async acquireJobLock(jobId: string, instanceId: string, ttl: number = 30): Promise<boolean> {
-    const lockKey = `${this.keyPrefix}lock:${jobId}`;
-    const result = await this.redis.set(lockKey, instanceId,"EX", ttl,"NX");
-    return result === 'OK';
-  }
-
-  /**
-   * Release a lock on a job
-   * 
-   * @param jobId - ID of the job to unlock
-   * @param instanceId - Unique ID of this worker instance
-   * @returns True if lock was released, false if not owned by this instance
-   */
-  async releaseJobLock(jobId: string, instanceId: string): Promise<boolean> {
-    const lockKey = `${this.keyPrefix}lock:${jobId}`;
-    const currentOwner = await this.redis.get(lockKey);
-    
-    if (currentOwner !== instanceId) {
-      return false;
-    }
-    
-    await this.redis.del(lockKey);
-    return true;
-  }
-
   // Helper method to generate Redis keys for jobs
   private getJobKey(id: string): string {
     return `${this.keyPrefix}job:${id}`;

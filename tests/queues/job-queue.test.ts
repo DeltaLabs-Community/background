@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { JobQueue } from '../src/queue/job-queue';
-import { InMemoryJobStorage } from '../src/storage/memory-storage';
-import { JobHandler } from '../src/types';
-import { QueueEvent } from '../src/utils/queue-event';
-import { QueueEventData } from '../src/utils/queue-event';
+import { JobQueue } from '../../src/queue/job-queue';
+import { InMemoryJobStorage } from '../../src/storage/memory-storage';
+import { JobHandler } from '../../src/types';
+import { QueueEventData } from '../../src/utils/queue-event';
 
 describe('JobQueue', () => {
   let queue: JobQueue;

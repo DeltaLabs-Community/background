@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi, afterAll } from 'vitest';
 import { PostgreSQLJobStorage } from '../../src/storage/postgresql-storage';
 import { PostgreSQLJobQueue } from '../../src/queue/postgresql-job-queue';
 import {Pool} from "pg"
 import { JobHandler } from '../../src/types';
-
+import dotenv from 'dotenv';
 describe('PostgreSQLJobQueue', () => {
   let pool: Pool;
   let storage: PostgreSQLJobStorage;
@@ -11,17 +11,12 @@ describe('PostgreSQLJobQueue', () => {
   let mockHandler: JobHandler;
   // Set up before each test
   beforeEach(() => {
-    // Create a fresh mock pool for each test
+    dotenv.config();
     pool = new Pool({
-      connectionString: 'postgresql://postgres:12345@localhost:5432/postgres',
+      connectionString: process.env.TEST_POSTGRESQL_URL || 'postgresql://postgres:12345@localhost:5432/postgres',
     });
-    
-    // Create storage with mock pool
     storage = new PostgreSQLJobStorage(pool, { tableName: 'jobs' });
-    
     pool.query(`DELETE FROM jobs`);
-
-    // Create queue with storage
     queue = new PostgreSQLJobQueue(storage, {
       name: 'test-queue',
       concurrency: 1,
@@ -46,6 +41,10 @@ describe('PostgreSQLJobQueue', () => {
     queue.stop();
   });
   
+  afterAll(() => {
+    pool.end();
+  });
+
   test('should add a job to the queue', async () => {
     const job = await queue.add('test-job', { foo: 'bar' });
     

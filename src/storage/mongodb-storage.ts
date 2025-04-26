@@ -1,4 +1,4 @@
-import { Collection, MongoClient } from "mongodb";
+import { ClientSession, Collection, MongoClient } from "mongodb";
 import { JobStorage } from "./base-storage";
 import { Job, JobStatus } from "../types";
 
@@ -66,62 +66,35 @@ export class MongoDBJobStorage implements MongoDBStorage {
     }
 
     /**
-     * Acquire a job lock
-     * @param jobId - The ID of the job to acquire the lock for
-     * @param ttl - The time to live for the lock in seconds
-     * @returns True if the lock was acquired, false if the lock already exists
-     */
-    async acquireJobLock(jobId: string, ttl: number = 30): Promise<boolean> {
-        const lock = await this.collection.findOne({ id: jobId, lock: { $exists: true } });
-        if (lock) {
-            return false;
-        }
-        await this.collection.updateOne({ id: jobId }, { $set: { lock: {expiresAt: new Date(Date.now() + ttl * 1000)}}});
-        return true;
-    }
-
-    /**
-     * Release a job lock
-     * @param jobId - The ID of the job to release the lock for
-     * @returns True if the lock was released, false if the lock did not exist
-     */
-    async releaseJobLock(jobId: string): Promise<boolean> {
-        await this.collection.updateOne({ id: jobId }, { $unset: { lock: 1 } });
-        return true;
-    }
-
-    /**
      * Acquire the next pending job
      * @returns The next pending job, or null if no pending jobs are available
      */
     async acquireNextJob(): Promise<Job | null> {
-        const session = this.mongoClient.startSession();
         try {
-            session.startTransaction({
-                readPreference: "primary",
-                readConcern: {
-                    level: "local"
-                }
-            });
-            const job = await this.collection.findOneAndUpdate(
-                { status: "pending" },
-                { $set: { status: "processing", startedAt: new Date() } },
+            const result = await this.collection.findOneAndUpdate(
+                { 
+                    status: "pending",
+                    $or: [
+                        { scheduledAt: { $exists: false } },
+                        { scheduledAt: { $lte: new Date() } }
+                    ]
+                },
                 {
-                    session,
-                    returnDocument: "after"
+                    $set: {
+                        status: "processing",
+                        startedAt: new Date()
+                    }
+                },
+                { 
+                    sort: { createdAt: 1 },
+                    returnDocument: "before" 
                 }
             );
-            if (!job) {
-                await session.abortTransaction();
-                return null;
-            }
-            await session.commitTransaction();
-            return job;
+            
+            return result || null;
         } catch (error) {
-            await session.abortTransaction();
+            console.error("Error acquiring next job", error);
             return null;
-        } finally {
-            await session.endSession();
         }
     }
     /**
@@ -130,25 +103,13 @@ export class MongoDBJobStorage implements MongoDBStorage {
      * @param result - The result of the job
      */
     async completeJob(jobId: string, result: any): Promise<void> {
-        const session = this.mongoClient.startSession();
         try {
-            session.startTransaction({
-                readPreference: "primary",
-                readConcern: {
-                    level: "local"
-                }
-            });
-            await this.collection.updateOne(
+            await this.collection.findOneAndUpdate(
                 { id: jobId, status: "processing" },
-                { $set: { status: "completed", result, completedAt: new Date() } },
-                { session }
+                { $set: { status: "completed", result, completedAt: new Date() } }
             );
-            await session.commitTransaction();
         } catch (error) {
-            await session.abortTransaction();
             throw error;
-        } finally {
-            await session.endSession();
         }
     }
     /**
@@ -157,25 +118,13 @@ export class MongoDBJobStorage implements MongoDBStorage {
      * @param error - The error message
      */
     async failJob(jobId: string, error: string): Promise<void> {
-        const session = this.mongoClient.startSession();
         try {
-            session.startTransaction({
-                readPreference: "primary",
-                readConcern: {
-                    level: "local"
-                }
-            });
-            await this.collection.updateOne(
+            await this.collection.findOneAndUpdate(
                 { id: jobId, status: "processing" },
-                { $set: { status: "failed", error, completedAt: new Date() } },
-                { session }
+                { $set: { status: "failed", error, completedAt: new Date() } }
             );
-            await session.commitTransaction();
         } catch (error) {
-            await session.abortTransaction();
             throw error;
-        } finally {
-            await session.endSession();
         }
     }
 }
