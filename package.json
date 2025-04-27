@@ -20,7 +20,8 @@
     "clean": "rimraf dist",
     "hono:inmemory": "nodemon --exec tsx examples/hono/server-inmemory.ts",
     "hono:mongo": "nodemon --exec tsx examples/hono/server-mongo.ts",
-    "hono:postgres": "nodemon --exec tsx examples/hono/server-postgres.ts"
+    "hono:postgres": "nodemon --exec tsx examples/hono/server-postgres.ts",
+    "prepare": "husky install"
   },
   "keywords": [
     "background-jobs",
@@ -62,10 +63,14 @@
     "mongodb": "6.16.0",
     "nodemon": "^3.1.10",
     "pg": "^8.15.1",
+    "prettier": "^3.5.3",
     "rimraf": "^6.0.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
     "vitest": "^3.1.1"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": "prettier --write"
   }
 }
