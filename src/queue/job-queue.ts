@@ -56,7 +56,7 @@ export class JobQueue extends EventTarget{
       };
       
       await this.storage.saveJob(job);
-      this.dispatchEvent(new QueueEvent('scheduled', job, 'pending'));
+      this.dispatchEvent(new QueueEvent('scheduled', {job, status: 'pending'}));
       return job;
     }
     
@@ -80,7 +80,7 @@ export class JobQueue extends EventTarget{
       };
       
       await this.storage.saveJob(job);
-      this.dispatchEvent(new QueueEvent('scheduled', job, 'pending'));
+      this.dispatchEvent(new QueueEvent('scheduled', {job, status: 'pending'}));
       return job;
     }
 
@@ -142,23 +142,16 @@ export class JobQueue extends EventTarget{
       if (this.activeJobs.size >= this.concurrency) {
         return;
       }
-      const pendingJobs = await this.storage.getJobsByStatus('pending');
-      const now = new Date();
-      
-      // Filter out jobs that are scheduled for the future
-      const readyJobs = pendingJobs.filter(job => 
-        !job.scheduledAt || job.scheduledAt <= now
-      );
-      
       const availableSlots = this.concurrency - this.activeJobs.size;
-      const jobsToProcess = readyJobs.slice(0, availableSlots);
-      
-      for (const job of jobsToProcess) {
+      for (let i = 0; i < availableSlots; i++) {
+        const job = await this.storage.acquireNextJob();
+        if (!job) {
+          break;
+        }
         // Skip if job is already being processed
         if (this.activeJobs.has(job.id)) {
           continue;
         }
-
         this.activeJobs.add(job.id);
         this.processJob(job).finally(() => {
           this.activeJobs.delete(job.id);
@@ -184,18 +177,11 @@ export class JobQueue extends EventTarget{
         const result = await handler(job.data);
 
         // Mark job as completed
-        job.status = 'completed';
-        job.completedAt = new Date();
-        job.result = result;
-        await this.storage.updateJob(job);
-        this.dispatchEvent(new QueueEvent('completed', job, 'completed'));
+        await this.storage.completeJob(job.id, result);
+        this.dispatchEvent(new QueueEvent('completed', {job, status: 'completed'}));
       } catch (error) {
         // Mark job as failed
-        job.status = 'failed';
-        job.completedAt = new Date();
-        job.error = error instanceof Error ? error.message : String(error);
-        await this.storage.updateJob(job);
-        this.dispatchEvent(new QueueEvent('failed', job, 'failed'));
+        this.dispatchEvent(new QueueEvent('failed', {job, status: 'failed'}));
         throw error;
       }
     }

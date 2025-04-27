@@ -15,10 +15,6 @@ import type { Redis } from "ioredis";
 export interface RedisStorage extends JobStorage {
   // Atomic job acquisition
   acquireNextJob(ttl?: number): Promise<Job | null>;
-  // Atomic job completion
-  completeJob(jobId: string, result: any): Promise<void>;
-  // Atomic job failure
-  failJob(jobId: string, error: string): Promise<void>;
   // Get jobs by priority
   getJobsByPriority(priority: number): Promise<Job[]>;
   // Get scheduled jobs within a time range

@@ -17,14 +17,26 @@
     "test:queue": "vitest run tests/queues/job-queue.test.ts",
     "test:postgresql": "vitest run tests/queues/postgresql-job-queue.test.ts",
     "test:mongodb": "vitest run tests/queues/mongodb-job-queue.test.ts",
-    "clean": "rimraf dist"
+    "clean": "rimraf dist",
+    "hono:inmemory": "nodemon --exec tsx examples/hono/server-inmemory.ts",
+    "hono:mongo": "nodemon --exec tsx examples/hono/server-mongo.ts",
+    "hono:postgres": "nodemon --exec tsx examples/hono/server-postgres.ts"
   },
   "keywords": [
     "background-jobs",
     "queue",
     "pulsejs",
     "bun",
-    "node"
+    "pulse",
+    "node",
+    "typescript",
+    "job-queue",
+    "job-scheduler",
+    "job-processor",
+    "job-runner",
+    "job-worker",
+    "job-queue-manager",
+    "job-queue-processor"
   ],
   "author": "",
   "license": "MIT",
@@ -39,13 +51,19 @@
     "pg": "^8.15.1"
   },
   "devDependencies": {
+    "@hono/node-server": "^1.14.1",
+    "@types/express": "^5.0.1",
     "@types/pg": "^8.11.14",
     "@vitest/coverage-v8": "^3.1.1",
     "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "hono": "^4.7.7",
     "ioredis": "^5.6.1",
     "mongodb": "6.16.0",
+    "nodemon": "^3.1.10",
     "pg": "^8.15.1",
     "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3",
     "vitest": "^3.1.1"

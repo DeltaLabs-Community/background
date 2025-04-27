@@ -12,13 +12,7 @@ import { Job, JobStatus } from "../types";
  * npm install mongodb
  */
 
-export interface MongoDBStorage extends JobStorage {
-    acquireNextJob(): Promise<Job | null>;
-    completeJob(jobId: string, result: any): Promise<void>;
-    failJob(jobId: string, error: string): Promise<void>;
-}
-
-export class MongoDBJobStorage implements MongoDBStorage {
+export class MongoDBJobStorage implements JobStorage {
     private readonly collection: Collection<Job>;
     private readonly mongoClient: MongoClient;
     
