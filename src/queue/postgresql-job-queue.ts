@@ -4,68 +4,71 @@ import { PostgreSQLJobStorage } from "../storage/postgresql-storage";
 import { Job, JobStatus } from "../types";
 
 export class PostgreSQLJobQueue extends JobQueue {
-    private readonly postgresStorage: PostgreSQLJobStorage;
-    /**
-     * Create a PostgreSQL job queue
-     * 
-     * @param storage - PostgreSQL storage implementation
-     * @param options - Configuration options
-     */
-    constructor(storage: JobStorage, options: { 
-        concurrency?: number, 
-        maxRetries?: number,
-        name?: string,
-        processingInterval?: number 
-    } = {}) {
-        super(storage, options);
-        this.postgresStorage = storage as PostgreSQLJobStorage;
-        this.concurrency = options.concurrency || 1;
-    }
-    
-    /**
-     * Process jobs with distributed locking
-     * Override the parent's protected method
-     */
-    protected async processNextBatch(): Promise<void> {
-        if(this.activeJobs.size >= this.concurrency) {
-            return;
-        }
-        const availableSlots = this.concurrency - this.activeJobs.size;
-        for(let i = 0; i < availableSlots; i++) {
-            const job = await this.postgresStorage.acquireNextJob();
-            if(!job) {
-                break;
-            }
-            this.activeJobs.add(job.id);
-            this.processJob(job).finally(() => {
-                this.activeJobs.delete(job.id);
-            });
-        }
-    }
+  private readonly postgresStorage: PostgreSQLJobStorage;
+  /**
+   * Create a PostgreSQL job queue
+   *
+   * @param storage - PostgreSQL storage implementation
+   * @param options - Configuration options
+   */
+  constructor(
+    storage: JobStorage,
+    options: {
+      concurrency?: number;
+      maxRetries?: number;
+      name?: string;
+      processingInterval?: number;
+    } = {},
+  ) {
+    super(storage, options);
+    this.postgresStorage = storage as PostgreSQLJobStorage;
+    this.concurrency = options.concurrency || 1;
+  }
 
-    /**
-     * Process a single job with locking
-     * This is called by the parent class
-     */
-    protected async processJob(job: Job): Promise<void> {
-        try {
-            await super.processJob(job);
-        } catch (error) {
-            const retryCount = job.retryCount || 0;
-            if (retryCount < this.maxRetries) {
-                const updatedJob: Job = { 
-                    ...job, 
-                    status: 'pending' as JobStatus,
-                    retryCount: retryCount + 1,
-                    error: `${error instanceof Error ? error.message : String(error)} (Retry ${retryCount + 1}/${this.maxRetries})`
-                };
-                await this.postgresStorage.updateJob(updatedJob);
-            } else {
-                job.status = 'failed';
-                job.completedAt = new Date();
-                job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
-                await this.postgresStorage.updateJob(job);
-            }
-        }
+  /**
+   * Process jobs with distributed locking
+   * Override the parent's protected method
+   */
+  protected async processNextBatch(): Promise<void> {
+    if (this.activeJobs.size >= this.concurrency) {
+      return;
     }
-} 
+    const availableSlots = this.concurrency - this.activeJobs.size;
+    for (let i = 0; i < availableSlots; i++) {
+      const job = await this.postgresStorage.acquireNextJob();
+      if (!job) {
+        break;
+      }
+      this.activeJobs.add(job.id);
+      this.processJob(job).finally(() => {
+        this.activeJobs.delete(job.id);
+      });
+    }
+  }
+
+  /**
+   * Process a single job with locking
+   * This is called by the parent class
+   */
+  protected async processJob(job: Job): Promise<void> {
+    try {
+      await super.processJob(job);
+    } catch (error) {
+      const retryCount = job.retryCount || 0;
+      if (retryCount < this.maxRetries) {
+        const updatedJob: Job = {
+          ...job,
+          status: "pending" as JobStatus,
+          retryCount: retryCount + 1,
+          error: `${error instanceof Error ? error.message : String(error)} (Retry ${retryCount + 1}/${this.maxRetries})`,
+        };
+        await this.postgresStorage.updateJob(updatedJob);
+      } else {
+        job.status = "failed";
+        job.completedAt = new Date();
+        job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
+        await this.postgresStorage.updateJob(job);
+      }
+    }
+  }
+}

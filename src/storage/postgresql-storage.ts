@@ -1,17 +1,16 @@
-import { Pool } from 'pg';
-import { JobStorage } from './base-storage';
-import { Job, JobStatus } from '../types';
-
+import { Pool } from "pg";
+import { JobStorage } from "./base-storage";
+import { Job, JobStatus } from "../types";
 
 export interface PostgreSQLStorage extends JobStorage {
-    acquireNextJob(): Promise<Job | null>;
-    completeJob(jobId: string, result: any): Promise<void>;
-    failJob(jobId: string, error: string): Promise<void>;
+  acquireNextJob(): Promise<Job | null>;
+  completeJob(jobId: string, result: any): Promise<void>;
+  failJob(jobId: string, error: string): Promise<void>;
 }
 
 /**
  * PostgreSQL storage adapter for JobQueue
- * 
+ *
  * This storage adapter uses PostgreSQL to store jobs, making it suitable
  * for distributed environments with multiple instances/processes.
  */
@@ -22,13 +21,13 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
 
   /**
    * Create a new PostgreSQL job storage
-   * 
+   *
    * @param pool - A pg Pool instance
    * @param options - Configuration options
    */
   constructor(pool: Pool, options: { tableName?: string } = {}) {
     this.pool = pool;
-    this.tableName = options.tableName || 'jobs';
+    this.tableName = options.tableName || "jobs";
   }
 
   /**
@@ -76,7 +75,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * Save a job to PostgreSQL
    */
   async saveJob(job: Job): Promise<void> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     await this.pool.query(
@@ -91,8 +90,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.createdAt,
         job.scheduledAt || null,
         job.retryCount || 0,
-        job.priority || 0
-      ]
+        job.priority || 0,
+      ],
     );
   }
 
@@ -100,12 +99,12 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * Get a job by ID
    */
   async getJob(id: string): Promise<Job | null> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     const result = await this.pool.query(
       `SELECT * FROM ${this.tableName} WHERE id = $1`,
-      [id]
+      [id],
     );
 
     if (result.rows.length === 0) {
@@ -119,22 +118,22 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * Get jobs by status
    */
   async getJobsByStatus(status: JobStatus): Promise<Job[]> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     const result = await this.pool.query(
       `SELECT * FROM ${this.tableName} WHERE status = $1`,
-      [status]
+      [status],
     );
 
-    return result.rows.map(row => this.mapRowToJob(row));
+    return result.rows.map((row) => this.mapRowToJob(row));
   }
 
   /**
    * Update a job
    */
   async updateJob(job: Job): Promise<void> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     const result = await this.pool.query(
@@ -161,8 +160,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.error || null,
         job.result ? JSON.stringify(job.result) : null,
         job.retryCount || 0,
-        job.priority || 0
-      ]
+        job.priority || 0,
+      ],
     );
 
     if (result.rowCount === 0) {
@@ -175,36 +174,36 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * @returns The next pending job, or null if no pending jobs are available
    */
   async acquireNextJob(): Promise<Job | null> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
       // Use the server's current time for the scheduled_at check
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
         WHERE status = 'pending' OR (scheduled_at IS NOT NULL AND scheduled_at <= $1)
         ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
-        [new Date()]
+        [new Date()],
       );
-      
-      if(query.rows.length === 0) {
-        await client.query('ROLLBACK');
+
+      if (query.rows.length === 0) {
+        await client.query("ROLLBACK");
         return null;
       }
-      
+
       const job = query.rows[0];
-      
+
       await client.query(
         `UPDATE ${this.tableName} SET status = 'processing', started_at = $1 WHERE id = $2`,
-        [new Date(), job.id]
+        [new Date(), job.id],
       );
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       return this.mapRowToJob(job);
     } catch (error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return null;
     } finally {
       client.release();
@@ -216,12 +215,12 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * @param result - The result of the job
    */
   async completeJob(jobId: string, result: any): Promise<void> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     await this.pool.query(
       `UPDATE ${this.tableName} SET status = 'completed', completed_at = NOW(), result = $2 WHERE id = $1`,
-      [jobId, JSON.stringify(result)]
+      [jobId, JSON.stringify(result)],
     );
   }
   /**
@@ -230,12 +229,12 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * @param error - The error message
    */
   async failJob(jobId: string, error: string): Promise<void> {
-    if(!this.initialized) {
+    if (!this.initialized) {
       await this.initialize();
     }
     await this.pool.query(
       `UPDATE ${this.tableName} SET status = 'failed', completed_at = NOW(), error = $2 WHERE id = $1`,
-      [jobId, error]
+      [jobId, error],
     );
   }
   /**
@@ -247,15 +246,19 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
     return {
       id: row.id,
       name: row.name,
-      data: typeof row.data === 'string' ? JSON.parse(row.data) : row.data,
+      data: typeof row.data === "string" ? JSON.parse(row.data) : row.data,
       status: row.status as JobStatus,
       createdAt: new Date(row.created_at),
       scheduledAt: row.scheduled_at ? new Date(row.scheduled_at) : undefined,
       startedAt: row.started_at ? new Date(row.started_at) : undefined,
       completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
       error: row.error || undefined,
-      result: row.result ? (typeof row.result === 'string' ? JSON.parse(row.result) : row.result) : undefined,
-      retryCount: row.retry_count || 0
+      result: row.result
+        ? typeof row.result === "string"
+          ? JSON.parse(row.result)
+          : row.result
+        : undefined,
+      retryCount: row.retry_count || 0,
     };
   }
-} 
+}

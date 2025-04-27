@@ -1,5 +1,5 @@
 // Define job status types
-export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type JobStatus = "pending" | "processing" | "completed" | "failed";
 
 // Define job interface
 export interface Job<T = any> {
