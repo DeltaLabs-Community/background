@@ -7,7 +7,7 @@ export class JobQueue extends EventTarget {
   /**
    * Job handlers registered with this queue
    */
-  private handlers: Map<string, JobHandler> = new Map();
+  protected handlers: Map<string, JobHandler> = new Map();
   protected storage: JobStorage;
   /**
    * Set of job IDs that are currently being processed
@@ -23,8 +23,9 @@ export class JobQueue extends EventTarget {
   private processing: boolean = false;
   private processingInterval: number = 1000; // 1 second
   private intervalId?: any = null; // For Universal JS
-  private name: string;
+  protected name: string;
   protected maxRetries: number = 3;
+  protected logging: boolean = false;
 
   constructor(
     storage: JobStorage,
@@ -33,6 +34,7 @@ export class JobQueue extends EventTarget {
       name?: string;
       processingInterval?: number;
       maxRetries?: number;
+      logging?: boolean;
     } = {},
   ) {
     super();
@@ -41,6 +43,7 @@ export class JobQueue extends EventTarget {
     this.name = options.name || "default";
     this.processingInterval = options.processingInterval || 1000;
     this.maxRetries = options.maxRetries || 3;
+    this.logging = options.logging || false;
   }
 
   // Register a job handler
@@ -57,7 +60,7 @@ export class JobQueue extends EventTarget {
     if (!this.handlers.has(name)) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
-    const priority = options?.priority || 0;
+    const priority = options?.priority || 1;
     const job: Job<T> = {
       id: generateId(),
       name,
@@ -66,6 +69,12 @@ export class JobQueue extends EventTarget {
       createdAt: new Date(),
       priority,
     };
+
+    if (this.logging) {
+      console.log(
+        `[${this.name}] Scheduled job ${job.id} to run at ${job.createdAt}`,
+      );
+    }
 
     await this.storage.saveJob(job);
     this.dispatchEvent(new QueueEvent("scheduled", { job, status: "pending" }));
@@ -90,6 +99,12 @@ export class JobQueue extends EventTarget {
       createdAt: new Date(),
       scheduledAt,
     };
+
+    if (this.logging) {
+      console.log(
+        `[${this.name}] Scheduled job ${job.id} to run at ${scheduledAt}`,
+      );
+    }
 
     await this.storage.saveJob(job);
     this.dispatchEvent(new QueueEvent("scheduled", { job, status: "pending" }));
@@ -116,6 +131,10 @@ export class JobQueue extends EventTarget {
   start(): void {
     if (this.processing) return;
 
+    if (this.logging) {
+      console.log(`[${this.name}] Starting job queue`);
+    }
+
     this.processing = true;
     this.intervalId = setInterval(
       () => this.processNextBatch(),
@@ -126,6 +145,10 @@ export class JobQueue extends EventTarget {
   // Stop processing jobs
   stop(): void {
     if (!this.processing) return;
+
+    if (this.logging) {
+      console.log(`[${this.name}] Stopping job queue`);
+    }
 
     this.processing = false;
     if (this.intervalId) {
@@ -156,34 +179,53 @@ export class JobQueue extends EventTarget {
 
   // Process the next batch of pending jobs
   protected async processNextBatch(): Promise<void> {
-    // Skip if we're already processing the maximum number of jobs
-    if (this.activeJobs.size >= this.concurrency) {
-      return;
-    }
-    const availableSlots = this.concurrency - this.activeJobs.size;
-    for (let i = 0; i < availableSlots; i++) {
-      const job = await this.storage.acquireNextJob();
-      if (!job) {
-        break;
+    try {
+      // Skip if we're already processing the maximum number of jobs
+      if (this.activeJobs.size >= this.concurrency) {
+        return;
       }
-      // Skip if job is already being processed
-      if (this.activeJobs.has(job.id)) {
-        continue;
+      const availableSlots = this.concurrency - this.activeJobs.size;
+      for (let i = 0; i < availableSlots; i++) {
+        const job = await this.storage.acquireNextJob();
+        if (!job) {
+          break;
+        }
+        // Skip if job is already being processed
+        if (this.activeJobs.has(job.id)) {
+          continue;
+        }
+        if (this.logging) {
+          console.log(`[${this.name}] Processing job:`, job);
+          console.log(
+            `[${this.name}] Available handlers:`,
+            Array.from(this.handlers.keys()),
+          );
+          console.log(
+            `[${this.name}] Has handler for ${job.name}:`,
+            this.handlers.has(job.name),
+          );
+        }
+        this.activeJobs.add(job.id);
+        this.processJob(job).finally(() => {
+          this.activeJobs.delete(job.id);
+        });
       }
-      this.activeJobs.add(job.id);
-      this.processJob(job).finally(() => {
-        this.activeJobs.delete(job.id);
-      });
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
     }
   }
 
   // Process a single job
   protected async processJob(job: Job): Promise<void> {
     try {
-      // Mark job as processing
-      job.status = "processing";
-      job.startedAt = new Date();
-      await this.storage.updateJob(job);
+      if (job.status !== "processing") {
+        // Mark job as processing
+        job.status = "processing";
+        job.startedAt = new Date();
+        await this.storage.updateJob(job);
+      }
 
       // Get the handler
       const handler = this.handlers.get(job.name);
@@ -199,10 +241,156 @@ export class JobQueue extends EventTarget {
       this.dispatchEvent(
         new QueueEvent("completed", { job, status: "completed" }),
       );
+
+      if (this.logging) {
+        console.log(`[${this.name}] Completed job ${job.id}`);
+      }
+      // Handle repeatable jobs
+      if (job.repeat) {
+        await this.scheduleNextRepeat(job);
+      }
     } catch (error) {
-      // Mark job as failed
       this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
+      if (this.logging) {
+        console.log(`[${this.name}] Failed job ${job.id}`);
+      }
       throw error;
     }
+  }
+
+  // Schedule the next occurrence of a repeatable job
+  protected async scheduleNextRepeat(job: Job): Promise<void> {
+    if (!job.repeat) return;
+
+    // Check if we've reached the repeat limit
+    if (job.repeat.limit) {
+      const executionCount = (job.retryCount || 0) + 1;
+      if (executionCount >= job.repeat.limit) {
+        return; // Don't schedule another repeat
+      }
+    }
+    // Check if we've passed the end date
+    if (job.repeat.endDate && new Date() > job.repeat.endDate) {
+      return; // Don't schedule another repeat
+    }
+
+    const nextExecutionTime = this.calculateNextExecutionTime(job);
+    // Create a new job with the same parameters
+    const newJob: Job = {
+      id: generateId(),
+      name: job.name,
+      data: job.data,
+      status: "pending",
+      createdAt: new Date(),
+      scheduledAt: nextExecutionTime,
+      priority: job.priority,
+      retryCount: (job.retryCount || 0) + 1,
+      repeat: job.repeat,
+    };
+    if (this.logging) {
+      console.log(
+        `[${this.name}] Scheduled repeatable job ${newJob.id} to run at ${nextExecutionTime}`,
+      );
+    }
+    await this.storage.saveJob(newJob);
+    this.dispatchEvent(
+      new QueueEvent("scheduled", { job: newJob, status: "pending" }),
+    );
+  }
+
+  // Calculate the next execution time based on the repeat configuration
+  protected calculateNextExecutionTime(job: Job): Date {
+    if (!job.repeat) {
+      throw new Error("Job does not have repeat configuration");
+    }
+
+    const now = new Date();
+    const { every, unit } = job.repeat;
+
+    if (every === undefined || unit === undefined) {
+      throw new Error("Invalid repeat configuration: missing every or unit");
+    }
+
+    let nextTime = new Date(now);
+
+    switch (unit) {
+      case "seconds":
+        nextTime.setSeconds(nextTime.getSeconds() + every);
+        break;
+      case "minutes":
+        nextTime.setMinutes(nextTime.getMinutes() + every);
+        break;
+      case "hours":
+        nextTime.setHours(nextTime.getHours() + every);
+        break;
+      case "days":
+        nextTime.setDate(nextTime.getDate() + every);
+        break;
+      case "weeks":
+        nextTime.setDate(nextTime.getDate() + every * 7);
+        break;
+      case "months":
+        nextTime.setMonth(nextTime.getMonth() + every);
+        break;
+      default:
+        throw new Error(`Unsupported repeat unit: ${unit}`);
+    }
+
+    return nextTime;
+  }
+
+  // Add a repeatable job to the queue
+  async addRepeatable<T>(
+    name: string,
+    data: T,
+    options: {
+      every: number;
+      unit: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
+      startDate?: Date;
+      endDate?: Date;
+      limit?: number;
+      priority?: number;
+    },
+  ): Promise<Job<T>> {
+    if (!this.handlers.has(name)) {
+      throw new Error(`Job handler for "${name}" not registered`);
+    }
+
+    // Validate options
+    if (options.every <= 0) {
+      throw new Error("Repeat interval must be greater than 0");
+    }
+
+    const priority = options.priority || 0;
+    const job: Job<T> = {
+      id: generateId(),
+      name,
+      data,
+      status: "pending",
+      createdAt: new Date(),
+      priority,
+      repeat: {
+        every: options.every,
+        unit: options.unit,
+        startDate: options.startDate || undefined,
+        endDate: options.endDate || undefined,
+        limit: options.limit || undefined,
+      },
+    };
+
+    if (this.logging) {
+      console.log(
+        `[${this.name}] Scheduled repeatable job ${job.id} to run at ${job.createdAt}`,
+      );
+    }
+
+    // Schedule the job to start at the specified time or now
+    if (options.startDate && options.startDate > new Date()) {
+      job.scheduledAt = options.startDate;
+    }
+
+    await this.storage.saveJob(job);
+    this.dispatchEvent(new QueueEvent("scheduled", { job, status: "pending" }));
+    return job;
   }
 }

@@ -18,24 +18,26 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
   private readonly pool: Pool;
   private readonly tableName: string;
   private initialized: boolean = false;
-
+  private readonly logging: boolean = false;
   /**
    * Create a new PostgreSQL job storage
    *
    * @param pool - A pg Pool instance
    * @param options - Configuration options
    */
-  constructor(pool: Pool, options: { tableName?: string } = {}) {
+  constructor(
+    pool: Pool,
+    options: { tableName?: string; logging?: boolean } = {},
+  ) {
     this.pool = pool;
     this.tableName = options.tableName || "jobs";
+    this.logging = options.logging || false;
   }
 
   /**
    * Initialize the database tables if they don't exist
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
-
     const client = await this.pool.connect();
     try {
       await client.query(`
@@ -51,6 +53,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           error TEXT,
           priority INTEGER DEFAULT 0,
           result JSONB,
+          repeat JSONB,
           retry_count INTEGER DEFAULT 0)
       `);
 
@@ -80,8 +83,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
     }
     await this.pool.query(
       `INSERT INTO ${this.tableName} (
-        id, name, data, status, created_at, scheduled_at, retry_count, priority
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        id, name, data, status, created_at, scheduled_at, retry_count, priority, repeat
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         job.id,
         job.name,
@@ -91,6 +94,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.scheduledAt || null,
         job.retryCount || 0,
         job.priority || 0,
+        JSON.stringify(job.repeat),
       ],
     );
   }
@@ -146,8 +150,9 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         completed_at = $7,
         error = $8,
         result = $9,
-        retry_count = $10,
-        priority = $11
+        repeat = $10,
+        retry_count = $11,
+        priority = $12
       WHERE id = $1`,
       [
         job.id,
@@ -159,6 +164,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         job.completedAt || null,
         job.error || null,
         job.result ? JSON.stringify(job.result) : null,
+        job.repeat ? JSON.stringify(job.repeat) : null,
         job.retryCount || 0,
         job.priority || 0,
       ],
@@ -184,7 +190,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       // Use the server's current time for the scheduled_at check
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
-        WHERE status = 'pending' OR (scheduled_at IS NOT NULL AND scheduled_at <= $1)
+        WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= $1)
         ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
         [new Date()],
       );
@@ -194,15 +200,24 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         return null;
       }
 
-      const job = query.rows[0];
-
+      let job = query.rows[0];
+      const now = new Date();
       await client.query(
         `UPDATE ${this.tableName} SET status = 'processing', started_at = $1 WHERE id = $2`,
-        [new Date(), job.id],
+        [now, job.id],
       );
+      job = this.mapRowToJob(job) as Job;
+      // Add so that we do not update it again in the processJob method
+      if (job) {
+        job.status = "processing";
+        job.startedAt = now;
+      }
       await client.query("COMMIT");
-      return this.mapRowToJob(job);
+      return job;
     } catch (error) {
+      if (this.logging) {
+        console.error("Error acquiring next job", error);
+      }
       await client.query("ROLLBACK");
       return null;
     } finally {
@@ -257,6 +272,11 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
         ? typeof row.result === "string"
           ? JSON.parse(row.result)
           : row.result
+        : undefined,
+      repeat: row.repeat
+        ? typeof row.repeat === "string"
+          ? JSON.parse(row.repeat)
+          : row.repeat
         : undefined,
       retryCount: row.retry_count || 0,
     };

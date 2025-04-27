@@ -15,6 +15,13 @@ export interface Job<T = any> {
   priority?: number;
   result?: any;
   retryCount?: number;
+  repeat?: {
+    every?: number;
+    unit?: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+  };
 }
 
 // Define job handler type

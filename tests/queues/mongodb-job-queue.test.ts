@@ -19,7 +19,7 @@ describe("MongoDBJobQueue", () => {
   let queue: MongoDBJobQueue;
   let mockHandler: JobHandler;
   let mongoClient = new MongoClient(
-    process.env.TEST_MONGODB_URL || "mongodb://localhost:27017",
+    process.env.TEST_MONGODB_URL || "mongodb://localhost:27017/test",
   );
 
   async function isConnectedToMongoDB() {
@@ -36,6 +36,7 @@ describe("MongoDBJobQueue", () => {
       await mongoClient.connect();
     }
     await mongoClient.db().collection("jobs").deleteMany({});
+
     storage = new MongoDBJobStorage(mongoClient, { collectionName: "jobs" });
     queue = new MongoDBJobQueue(storage, {
       name: "test-queue",
@@ -178,5 +179,29 @@ describe("MongoDBJobQueue", () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(priorityHandler).toHaveBeenNthCalledWith(1, { priority: 1 });
     expect(priorityHandler).toHaveBeenNthCalledWith(2, { priority: 10 });
+  });
+  test("should process repeatable jobs", async () => {
+    const repeatableQueue = new MongoDBJobQueue(storage, {
+      name: "repeatable-queue",
+      concurrency: 1,
+      processingInterval: 20,
+    });
+
+    const repeatableHandler = vi.fn().mockImplementation(async () => {
+      console.log("Repeatable job executed");
+    });
+    repeatableQueue.register("repeatable-job", repeatableHandler);
+    await repeatableQueue.addRepeatable(
+      "repeatable-job",
+      { id: 1 },
+      {
+        every: 1,
+        unit: "seconds",
+      },
+    );
+    repeatableQueue.start();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    repeatableQueue.stop();
+    expect(repeatableHandler).toHaveBeenCalledTimes(3);
   });
 });

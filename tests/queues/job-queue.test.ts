@@ -5,45 +5,32 @@ import { JobHandler } from "../../src/types";
 import { QueueEvent } from "../../src/utils/queue-event";
 
 describe("JobQueue", () => {
-  let queue: JobQueue;
   let storage: InMemoryJobStorage;
   let mockHandler: JobHandler;
-  let eventListener: EventListener;
+  let eventListener;
 
   beforeEach(() => {
-    // Create fresh storage and queue for each test
+    // Create a fresh storage instance for each test
     storage = new InMemoryJobStorage();
+
     mockHandler = vi.fn().mockResolvedValue({ success: true });
-    queue = new JobQueue(storage, {
-      concurrency: 1,
-      name: "test-queue",
-      processingInterval: 20,
-    });
-
-    // Register a mock handler
-    queue.register("test-job", mockHandler);
-
     // Add an event listener
     eventListener = vi.fn().mockImplementation((event: QueueEvent) => {
       console.log("Event received:", event.data);
     });
-
-    // register event listeners
-    queue.addEventListener("scheduled", eventListener);
-    queue.addEventListener("completed", eventListener);
-    queue.addEventListener("failed", eventListener);
   });
 
   afterEach(() => {
-    // Stop the queue after each test
-    queue.stop();
     vi.restoreAllMocks();
-    queue.removeEventListener("scheduled", eventListener);
-    queue.removeEventListener("completed", eventListener);
-    queue.removeEventListener("failed", eventListener);
   });
 
   it("should add a job to the queue", async () => {
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     const job = await queue.add("test-job", { message: "Hello, World!" });
 
     expect(job).toBeDefined();
@@ -51,13 +38,17 @@ describe("JobQueue", () => {
     expect(job.status).toBe("pending");
     expect(job.name).toBe("test-job");
     expect(job.data).toEqual({ message: "Hello, World!" });
-
-    // Verify it's saved to storage
     const savedJob = await storage.getJob(job.id);
     expect(savedJob).toEqual(job);
   });
 
   it("should throw error for unregistered job handler", async () => {
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     await expect(queue.add("non-existent-job", {})).rejects.toThrow();
   });
 
@@ -65,6 +56,12 @@ describe("JobQueue", () => {
     const futureDate = new Date();
     futureDate.setMinutes(futureDate.getMinutes() + 10); // 10 minutes in the future
 
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     const job = await queue.schedule(
       "test-job",
       { message: "Future task" },
@@ -74,12 +71,17 @@ describe("JobQueue", () => {
     expect(job).toBeDefined();
     expect(job.scheduledAt).toEqual(futureDate);
 
-    // Verify it's saved to storage with scheduled time
     const savedJob = await storage.getJob(job.id);
     expect(savedJob?.scheduledAt).toEqual(futureDate);
   });
 
   it("should retrieve a job by ID", async () => {
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     const job = await queue.add("test-job", { message: "Hello, World!" });
     const retrievedJob = await queue.getJob(job.id);
 
@@ -87,6 +89,12 @@ describe("JobQueue", () => {
   });
 
   it("should process a job", async () => {
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     // Mock Date.now for consistent testing
     const now = new Date();
     vi.spyOn(global, "Date").mockImplementation(() => now as any);
@@ -99,6 +107,9 @@ describe("JobQueue", () => {
 
     // Wait longer to ensure job processing
     await new Promise((resolve) => setTimeout(resolve, 25));
+
+    // Stop the queue
+    queue.stop();
 
     // Verify the handler was called with the correct data
     expect(mockHandler).toHaveBeenCalledWith({ message: "Hello, World!" });
@@ -114,6 +125,12 @@ describe("JobQueue", () => {
     const futureDate = new Date();
     futureDate.setMinutes(futureDate.getMinutes() + 10); // 10 minutes in the future
 
+    const queue = new JobQueue(storage, {
+      concurrency: 1,
+      name: "test-queue",
+      processingInterval: 20,
+    });
+    queue.register("test-job", mockHandler);
     const job = await queue.schedule(
       "test-job",
       { message: "Future task" },
@@ -125,7 +142,7 @@ describe("JobQueue", () => {
 
     // Wait a bit
     await new Promise((resolve) => setTimeout(resolve, 25));
-
+    queue.stop();
     // Verify handler wasn't called for the future job
     expect(mockHandler).not.toHaveBeenCalled();
   });
@@ -153,10 +170,6 @@ describe("JobQueue", () => {
     // Register the slow handler
     concurrentQueue.register("slow-job", slowHandler);
 
-    // unregister event listeners
-    concurrentQueue.removeEventListener("scheduled", eventListener);
-    concurrentQueue.removeEventListener("completed", completedEventListener);
-
     // register event listeners
     concurrentQueue.addEventListener("scheduled", eventListener);
     concurrentQueue.addEventListener("completed", completedEventListener);
@@ -181,5 +194,36 @@ describe("JobQueue", () => {
     expect(slowHandler).toHaveBeenCalledWith({ id: 1 });
     expect(slowHandler).toHaveBeenCalledWith({ id: 2 });
     expect(completedEventListener).toHaveBeenCalledTimes(2);
+  });
+
+  it("should process repeatable jobs", async () => {
+    // Use a unique queue name to avoid collisions
+    const repeatableQueue = new JobQueue(storage, {
+      concurrency: 1,
+      processingInterval: 20,
+      name: `repeatable-queue-${Date.now()}`,
+      logging: true,
+    });
+
+    const repeatableHandler = vi.fn().mockImplementation(async () => {
+      console.log("Repeatable job executed");
+      return { success: true };
+    });
+
+    repeatableQueue.register("repeatable-job", repeatableHandler);
+
+    await repeatableQueue.addRepeatable(
+      "repeatable-job",
+      { id: 1 },
+      {
+        every: 1,
+        unit: "seconds",
+      },
+    );
+
+    repeatableQueue.start();
+    await new Promise((resolve) => setTimeout(resolve, 3000)); // Slightly longer wait
+    repeatableQueue.stop();
+    expect(repeatableHandler).toHaveBeenCalledTimes(3);
   });
 });

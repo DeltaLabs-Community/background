@@ -18,11 +18,13 @@ export class PostgreSQLJobQueue extends JobQueue {
       maxRetries?: number;
       name?: string;
       processingInterval?: number;
+      logging?: boolean;
     } = {},
   ) {
     super(storage, options);
     this.postgresStorage = storage as PostgreSQLJobStorage;
     this.concurrency = options.concurrency || 1;
+    this.logging = options.logging || false;
   }
 
   /**
@@ -39,6 +41,17 @@ export class PostgreSQLJobQueue extends JobQueue {
       if (!job) {
         break;
       }
+      if (this.logging) {
+        console.log(`[${this.name}] Processing job:`, job);
+        console.log(
+          `[${this.name}] Available handlers:`,
+          Array.from(this.handlers.keys()),
+        );
+        console.log(
+          `[${this.name}] Has handler for ${job.name}:`,
+          this.handlers.has(job.name),
+        );
+      }
       this.activeJobs.add(job.id);
       this.processJob(job).finally(() => {
         this.activeJobs.delete(job.id);
@@ -52,7 +65,15 @@ export class PostgreSQLJobQueue extends JobQueue {
    */
   protected async processJob(job: Job): Promise<void> {
     try {
+      if (this.logging) {
+        console.log(
+          `[${this.name}] Starting to process job ${job.id} (${job.name})`,
+        );
+      }
       await super.processJob(job);
+      if (this.logging && job.repeat) {
+        console.log(`[${this.name}] Completed repeatable job ${job.id}`);
+      }
     } catch (error) {
       const retryCount = job.retryCount || 0;
       if (retryCount < this.maxRetries) {

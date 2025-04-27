@@ -1,6 +1,7 @@
 import { Job, JobStatus } from "../types";
 import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
+import { generateId } from "../utils/id-generator";
 
 /**
  * Redis storage adapter for JobQueue
@@ -31,7 +32,7 @@ export class RedisJobStorage implements RedisStorage {
   private readonly priorityQueueKeys: { [priority: number]: string };
   // Sorted set for scheduled jobs
   private readonly scheduledJobsKey: string;
-
+  private readonly logging: boolean = false;
   // Lua scripts
   private readonly saveJobScript: string;
   private readonly updateJobScript: string;
@@ -46,7 +47,10 @@ export class RedisJobStorage implements RedisStorage {
    * @param redis - An ioredis client instance
    * @param options - Configuration options
    */
-  constructor(redis: Redis, options: { keyPrefix?: string } = {}) {
+  constructor(
+    redis: Redis,
+    options: { keyPrefix?: string; logging?: boolean } = {},
+  ) {
     this.redis = redis;
     this.keyPrefix = options.keyPrefix || "jobqueue:";
     this.jobListKey = `${this.keyPrefix}jobs`;
@@ -63,7 +67,7 @@ export class RedisJobStorage implements RedisStorage {
       9: `${this.keyPrefix}priority:9`,
       10: `${this.keyPrefix}priority:10`,
     };
-
+    this.logging = options.logging || false;
     // Define Lua script for saveJob
     this.saveJobScript = `
       -- Arguments:
@@ -551,39 +555,6 @@ export class RedisJobStorage implements RedisStorage {
   }
 
   /**
-   * Process a job that has been acquired
-   * @private
-   */
-  private async processAcquiredJob(
-    jobId: string,
-    ttl: number,
-  ): Promise<Job | null> {
-    const jobKey = this.getJobKey(jobId);
-
-    // Get job data
-    const jobData = await this.redis.hgetall(jobKey);
-
-    if (!jobData || Object.keys(jobData).length === 0) return null;
-
-    const job = this.deserializeJob(jobData);
-
-    // Ensure the job ID is set correctly
-    job.id = jobId;
-
-    // Update job status
-    job.status = "processing";
-    job.startedAt = new Date();
-
-    // Update job
-    await this.updateJob(job);
-
-    // Set expiry on job key
-    await this.redis.expire(jobKey, ttl);
-
-    return job;
-  }
-
-  /**
    * Serialize a job object for Redis storage
    * @private
    */
@@ -605,6 +576,7 @@ export class RedisJobStorage implements RedisStorage {
     if (job.error) serialized.error = job.error;
     if (job.retryCount !== undefined)
       serialized.retryCount = String(job.retryCount);
+    if (job.repeat) serialized.repeat = JSON.stringify(job.repeat);
 
     return serialized;
   }
@@ -626,6 +598,7 @@ export class RedisJobStorage implements RedisStorage {
     if (data.scheduledAt) job.scheduledAt = new Date(data.scheduledAt);
     if (data.startedAt) job.startedAt = new Date(data.startedAt);
     if (data.completedAt) job.completedAt = new Date(data.completedAt);
+    if (data.repeat) job.repeat = JSON.parse(data.repeat);
     if (data.data) {
       try {
         job.data = JSON.parse(data.data);
@@ -711,7 +684,7 @@ export class RedisJobStorage implements RedisStorage {
     const serializedResult = JSON.stringify(result);
     const now = new Date().toISOString();
 
-    // Run the Lua script
+    // Run the Lua script to complete the job
     const scriptResult = await this.redis.eval(
       this.completeJobScript,
       2, // Number of keys

@@ -15,15 +15,17 @@ import { Job, JobStatus } from "../types";
 export class MongoDBJobStorage implements JobStorage {
   private readonly collection: Collection<Job>;
   private readonly mongoClient: MongoClient;
+  private readonly logging: boolean = false;
 
   constructor(
     mongoClient: MongoClient,
-    options: { collectionName?: string } = {},
+    options: { collectionName?: string; logging?: boolean } = {},
   ) {
     this.mongoClient = mongoClient;
     this.collection = this.mongoClient
       .db()
       .collection(options.collectionName || "jobs");
+    this.logging = options.logging || false;
   }
   /**
    * Save a job
@@ -66,7 +68,7 @@ export class MongoDBJobStorage implements JobStorage {
    */
   async acquireNextJob(): Promise<Job | null> {
     try {
-      const result = await this.collection.findOneAndUpdate(
+      const job = await this.collection.findOneAndUpdate(
         {
           status: "pending",
           $or: [
@@ -74,21 +76,14 @@ export class MongoDBJobStorage implements JobStorage {
             { scheduledAt: { $lte: new Date() } },
           ],
         },
-        {
-          $set: {
-            status: "processing",
-            startedAt: new Date(),
-          },
-        },
-        {
-          sort: { priority: 1, createdAt: 1 },
-          returnDocument: "before",
-        },
+        { $set: { status: "processing", startedAt: new Date() } },
+        { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" },
       );
-
-      return result || null;
+      return job || null;
     } catch (error) {
-      console.error("Error acquiring next job", error);
+      if (this.logging) {
+        console.error("Error acquiring next job", error);
+      }
       return null;
     }
   }
@@ -104,6 +99,9 @@ export class MongoDBJobStorage implements JobStorage {
         { $set: { status: "completed", result, completedAt: new Date() } },
       );
     } catch (error) {
+      if (this.logging) {
+        console.error("Error completing job", error);
+      }
       throw error;
     }
   }
@@ -119,6 +117,9 @@ export class MongoDBJobStorage implements JobStorage {
         { $set: { status: "failed", error, completedAt: new Date() } },
       );
     } catch (error) {
+      if (this.logging) {
+        console.error("Error failing job", error);
+      }
       throw error;
     }
   }

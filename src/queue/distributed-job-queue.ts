@@ -10,6 +10,7 @@ import { RedisStorage } from "../storage/redis-storage";
 export class DistributedJobQueue extends JobQueue {
   private readonly redisStorage: RedisStorage;
   private readonly jobTTL: number = 30; // seconds
+  private queueName: string = "distributed-queue";
 
   /**
    * Create a distributed job queue
@@ -25,11 +26,14 @@ export class DistributedJobQueue extends JobQueue {
       jobTTL?: number;
       processingInterval?: number;
       maxRetries?: number;
+      logging?: boolean;
     } = {},
   ) {
     super(storage, options);
     this.redisStorage = storage;
     this.jobTTL = options.jobTTL || 30;
+    this.logging = options.logging || false;
+    this.queueName = options.name || "distributed-queue";
   }
 
   /**
@@ -37,18 +41,10 @@ export class DistributedJobQueue extends JobQueue {
    * Override the parent's protected method
    */
   protected async processNextBatch(): Promise<void> {
-    // Skip if we're already processing the maximum number of jobs
     if (this.activeJobs.size >= this.concurrency) {
-      console.log(
-        `Already at max concurrency (${this.concurrency}), skipping batch.`,
-      );
       return;
     }
-
     const availableSlots = this.concurrency - this.activeJobs.size;
-
-    // Try to acquire jobs atomically
-    const processingPromises: Promise<void>[] = [];
 
     for (let i = 0; i < availableSlots; i++) {
       try {
@@ -56,19 +52,31 @@ export class DistributedJobQueue extends JobQueue {
         if (!job) {
           break; // No more jobs available
         }
+        if (this.logging) {
+          console.log(`[${this.queueName}] Processing job:`, job);
+          console.log(
+            `[${this.queueName}] Available handlers:`,
+            Array.from(this.handlers.keys()),
+          );
+          console.log(
+            `[${this.queueName}] Has handler for ${job.name}:`,
+            this.handlers.has(job.name),
+          );
+        }
         this.activeJobs.add(job.id);
         // Create a promise for processing this job
-        const processingPromise = this.processJob(job)
+        this.processJob(job)
           .catch((error) => {
-            console.error(`Error processing job ${job.id}:`, error);
+            console.error(
+              `[${this.queueName}] Error processing job ${job.id}:`,
+              error,
+            );
           })
           .finally(() => {
             this.activeJobs.delete(job.id);
           });
-
-        processingPromises.push(processingPromise);
       } catch (error) {
-        console.error("Error acquiring job:", error);
+        console.error(`[${this.queueName}] Error in processNextBatch:`, error);
       }
     }
   }
@@ -79,9 +87,25 @@ export class DistributedJobQueue extends JobQueue {
    */
   protected async processJob(job: Job): Promise<void> {
     try {
+      if (this.logging) {
+        console.log(
+          `[${this.queueName}] Starting to process job ${job.id} (${job.name})`,
+        );
+      }
+      // Check if handler exists before trying to process
+      if (!this.handlers.has(job.name)) {
+        throw new Error(`Handler for job "${job.name}" not found`);
+      }
       // Get the handler using the parent's processJob method
       await super.processJob(job);
+      if (this.logging && job.repeat) {
+        console.log(`[${this.queueName}] Completed repeatable job ${job.id}`);
+      }
     } catch (error) {
+      // Log the error
+      if (this.logging) {
+        console.error(`[${this.queueName}] Error in processJob:`, error);
+      }
       // Mark job as failed atomically
       const errorMessage =
         error instanceof Error ? error.message : String(error);

@@ -11,12 +11,14 @@ export class MongoDBJobQueue extends JobQueue {
       concurrency?: number;
       maxRetries?: number;
       name?: string;
+      logging?: boolean;
       processingInterval?: number;
     } = {},
   ) {
     super(storage, options);
     this.mongodbStorage = storage as MongoDBJobStorage;
     this.concurrency = options.concurrency || 1;
+    this.logging = options.logging || false;
   }
   /**
    * Process jobs with distributed locking
@@ -32,12 +34,25 @@ export class MongoDBJobQueue extends JobQueue {
       if (!job) {
         break;
       }
+
+      if (this.logging) {
+        console.log(`[${this.name}] Processing job:`, job);
+        console.log(
+          `[${this.name}] Available handlers:`,
+          Array.from(this.handlers.keys()),
+        );
+        console.log(
+          `[${this.name}] Has handler for ${job.name}:`,
+          this.handlers.has(job.name),
+        );
+      }
+
       this.activeJobs.add(job.id);
       this.processJob(job)
         .catch((error) => {
           console.error("Error processing job", error);
         })
-        .finally(() => {
+        .finally(async () => {
           this.activeJobs.delete(job.id);
         });
     }
@@ -49,7 +64,15 @@ export class MongoDBJobQueue extends JobQueue {
    */
   protected async processJob(job: Job): Promise<void> {
     try {
+      if (this.logging) {
+        console.log(
+          `[${this.name}] Starting to process job ${job.id} (${job.name})`,
+        );
+      }
       await super.processJob(job);
+      if (this.logging && job.repeat) {
+        console.log(`[${this.name}] Completed repeatable job ${job.id}`);
+      }
     } catch (error) {
       const retryCount = job.retryCount || 0;
       // Retry job if it has not failed too many times

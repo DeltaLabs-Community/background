@@ -13,4 +13,13 @@ export const honoJobs = (app: Hono, queues: JobQueue[]) => {
     c.set("queues", queues);
     await next();
   });
+
+  // Stop all queues when the process is terminated
+  ["SIGTERM", "SIGINT", "SIGKILL"].forEach((signal) => {
+    process.on(signal, () => {
+      queues.forEach((queue) => {
+        queue.stop();
+      });
+    });
+  });
 };

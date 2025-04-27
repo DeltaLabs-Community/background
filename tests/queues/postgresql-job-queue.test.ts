@@ -18,13 +18,16 @@ describe("PostgreSQLJobQueue", () => {
   let queue: PostgreSQLJobQueue;
   let mockHandler: JobHandler;
   // Set up before each test
-  beforeEach(() => {
+  beforeEach(async () => {
     dotenv.config();
     pool = new Pool({
       connectionString:
         process.env.TEST_POSTGRESQL_URL ||
         "postgresql://postgres:12345@localhost:5432/postgres",
     });
+
+    await pool.query("DELETE FROM jobs");
+
     storage = new PostgreSQLJobStorage(pool, { tableName: "jobs" });
     queue = new PostgreSQLJobQueue(storage, {
       name: "test-queue",
@@ -48,7 +51,6 @@ describe("PostgreSQLJobQueue", () => {
 
     // Stop the queue if it's processing
     queue.stop();
-    pool.query(`DELETE FROM jobs`);
   });
 
   afterAll(() => {
@@ -172,5 +174,29 @@ describe("PostgreSQLJobQueue", () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(priorityHandler).toHaveBeenNthCalledWith(1, { priority: 1 });
     expect(priorityHandler).toHaveBeenNthCalledWith(2, { priority: 10 });
+  });
+  test("should process repeatable jobs", async () => {
+    const repeatableHandler = vi.fn().mockImplementation(async () => {
+      console.log("Repeatable job executed");
+    });
+
+    const repeatableQueue = new PostgreSQLJobQueue(storage, {
+      name: "repeatable-queue",
+      concurrency: 1,
+      processingInterval: 20,
+    });
+    repeatableQueue.register("repeatable-job", repeatableHandler);
+    await repeatableQueue.addRepeatable(
+      "repeatable-job",
+      { id: 1 },
+      {
+        every: 1,
+        unit: "seconds",
+      },
+    );
+    repeatableQueue.start();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    repeatableQueue.stop();
+    expect(repeatableHandler).toHaveBeenCalledTimes(3);
   });
 });
