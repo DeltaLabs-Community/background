@@ -141,4 +141,36 @@ describe("DistributedJobQueue", () => {
     repeatableQueue.stop();
     expect(repeatableHandler).toHaveBeenCalledTimes(3);
   });
+
+  it("should handle intelligent polling", async () => {
+    const queue = new DistributedJobQueue(storage, {
+      concurrency: 1,
+      processingInterval: 100,
+      intelligentPolling: true,
+      minInterval: 100,
+      maxInterval: 225,
+      maxEmptyPolls: 5,
+      loadFactor: 0.5,
+    });
+
+    const handler = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return { success: true };
+    });
+
+    const eventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      console.log(
+        "polling-interval-updated event received:",
+        event.data.message,
+      );
+      expect(event.data.message).toBeDefined();
+    });
+
+    queue.addEventListener("polling-interval-updated", eventListener);
+    queue.register("test-job", handler);
+    queue.start();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    queue.stop();
+    expect(eventListener).toHaveBeenCalledTimes(2);
+  });
 });

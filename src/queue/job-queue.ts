@@ -26,6 +26,15 @@ export class JobQueue extends EventTarget {
   protected name: string;
   protected maxRetries: number = 3;
   protected logging: boolean = false;
+  private lastPollingInterval: number = 0;
+
+  // Intelligent polling properties
+  private intelligentPolling: boolean = false;
+  private minInterval: number = 100; // Minimum polling interval (ms)
+  private maxInterval: number = 5000; // Maximum polling interval (ms)
+  private emptyPollsCount: number = 0;
+  private maxEmptyPolls: number = 5; // Number of empty polls before increasing interval
+  private loadFactor: number = 0.5; // Target load factor (0.0 to 1.0)
 
   constructor(
     storage: JobStorage,
@@ -35,6 +44,11 @@ export class JobQueue extends EventTarget {
       processingInterval?: number;
       maxRetries?: number;
       logging?: boolean;
+      intelligentPolling?: boolean;
+      minInterval?: number;
+      maxInterval?: number;
+      maxEmptyPolls?: number;
+      loadFactor?: number;
     } = {},
   ) {
     super();
@@ -44,6 +58,16 @@ export class JobQueue extends EventTarget {
     this.processingInterval = options.processingInterval || 1000;
     this.maxRetries = options.maxRetries || 3;
     this.logging = options.logging || false;
+    this.lastPollingInterval = this.processingInterval;
+
+    // Intelligent polling configuration
+    this.intelligentPolling = options.intelligentPolling || false;
+    if (this.intelligentPolling) {
+      this.minInterval = options.minInterval || 100;
+      this.maxInterval = options.maxInterval || 5000;
+      this.maxEmptyPolls = options.maxEmptyPolls || 5;
+      this.loadFactor = options.loadFactor || 0.5;
+    }
   }
 
   // Register a job handler
@@ -184,7 +208,10 @@ export class JobQueue extends EventTarget {
       if (this.activeJobs.size >= this.concurrency) {
         return;
       }
+
       const availableSlots = this.concurrency - this.activeJobs.size;
+      let jobsProcessed = 0;
+
       for (let i = 0; i < availableSlots; i++) {
         const job = await this.storage.acquireNextJob();
         if (!job) {
@@ -209,10 +236,79 @@ export class JobQueue extends EventTarget {
         this.processJob(job).finally(() => {
           this.activeJobs.delete(job.id);
         });
+        jobsProcessed++;
       }
+
+      // Update intelligent polling metrics
+      this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
       if (this.logging) {
         console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
+    }
+  }
+
+  // Update polling interval based on processing results
+  protected updatePollingInterval(hadJobs: boolean): void {
+    if (!this.intelligentPolling) {
+      return; // Skip intelligent polling if disabled
+    }
+    if (hadJobs) {
+      // Jobs were found and processed
+      this.emptyPollsCount = 0;
+
+      // Calculate current load factor
+      const currentLoad = this.activeJobs.size / this.concurrency;
+
+      // Adjust interval based on load
+      if (currentLoad > this.loadFactor) {
+        // System is busy, poll more frequently
+        this.processingInterval = Math.max(
+          this.minInterval,
+          this.lastPollingInterval * 0.8,
+        );
+      } else {
+        // System is underutilized, poll less frequently
+        this.processingInterval = Math.min(
+          this.maxInterval,
+          this.lastPollingInterval * 1.2,
+        );
+      }
+    } else {
+      // No jobs were found
+      this.emptyPollsCount++;
+
+      if (this.emptyPollsCount >= this.maxEmptyPolls) {
+        // Gradually increase interval when queue is empty
+        this.processingInterval = Math.min(
+          this.maxInterval,
+          this.lastPollingInterval * 1.5,
+        );
+        this.emptyPollsCount = 0;
+      }
+    }
+
+    // Update the interval if queue is running
+    if (
+      this.processing &&
+      this.intervalId &&
+      this.processingInterval !== this.lastPollingInterval
+    ) {
+      clearInterval(this.intervalId);
+      this.lastPollingInterval = this.processingInterval;
+      this.intervalId = setInterval(
+        () => this.processNextBatch(),
+        this.processingInterval,
+      );
+      this.dispatchEvent(
+        new QueueEvent("polling-interval-updated", {
+          message: `Polling interval adjusted to: ${this.processingInterval}ms`,
+        }),
+      );
+      if (this.logging) {
+        console.log(
+          `[${this.name}] Polling interval adjusted to: ${this.processingInterval}ms`,
+        );
       }
     }
   }

@@ -1,8 +1,9 @@
 import { Job, JobStatus } from "../types";
 
 export interface QueueEventData {
-  job: Job;
-  status: JobStatus;
+  job?: Job;
+  status?: JobStatus;
+  message?: string;
 }
 
 // Extend standard Event with our custom data

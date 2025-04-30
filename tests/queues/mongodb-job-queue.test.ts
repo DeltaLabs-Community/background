@@ -1,6 +1,6 @@
 import {
   describe,
-  test,
+  it,
   expect,
   beforeEach,
   afterEach,
@@ -12,6 +12,7 @@ import { MongoDBJobQueue } from "../../src/queue/mongodb-job-queue";
 import { MongoClient } from "mongodb";
 import { JobHandler } from "../../src/types";
 import dotenv from "dotenv";
+import { QueueEvent } from "../../src/utils/queue-event";
 
 describe("MongoDBJobQueue", () => {
   dotenv.config();
@@ -63,7 +64,7 @@ describe("MongoDBJobQueue", () => {
     await mongoClient.close();
   });
 
-  test("should add a job to the queue", async () => {
+  it("should add a job to the queue", async () => {
     const job = await queue.add("test-job", { foo: "bar" });
 
     expect(job).toBeDefined();
@@ -77,7 +78,7 @@ describe("MongoDBJobQueue", () => {
     expect(savedJob?.id).toBe(job.id);
   });
 
-  test("should schedule a job for later execution", async () => {
+  it("should schedule a job for later execution", async () => {
     const scheduledTime = new Date(Date.now() + 1000 * 60);
     const job = await queue.schedule(
       "test-job",
@@ -98,7 +99,7 @@ describe("MongoDBJobQueue", () => {
     expect(savedJob?.scheduledAt).toEqual(scheduledTime);
   });
 
-  test("should process a job successfully", async () => {
+  it("should process a job successfully", async () => {
     const job = await queue.add("test-job", { process: true });
 
     queue.start();
@@ -114,7 +115,7 @@ describe("MongoDBJobQueue", () => {
     expect(updatedJob?.status).toBe("completed");
   });
 
-  test("should retry a failed job", async () => {
+  it("should retry a failed job", async () => {
     let attempts = 0;
     const retriableHandler = vi.fn().mockImplementation(() => {
       attempts++;
@@ -142,7 +143,7 @@ describe("MongoDBJobQueue", () => {
     expect(updatedJob?.retryCount).toBe(1);
   });
 
-  test("should mark a job as failed after max retries", async () => {
+  it("should mark a job as failed after max retries", async () => {
     const failingHandler = vi.fn().mockImplementation(() => {
       throw new Error("Persistent failure");
     });
@@ -164,7 +165,8 @@ describe("MongoDBJobQueue", () => {
     expect(updatedJob?.error).toContain("Failed after 2 retries");
     expect(updatedJob?.retryCount).toBe(2);
   });
-  test("should handle job priority", async () => {
+
+  it("should handle job priority", async () => {
     await queue.add("test-job", { priority: 10 }, { priority: 10 });
     await queue.add("test-job", { priority: 1 }, { priority: 1 });
 
@@ -180,7 +182,8 @@ describe("MongoDBJobQueue", () => {
     expect(priorityHandler).toHaveBeenNthCalledWith(1, { priority: 1 });
     expect(priorityHandler).toHaveBeenNthCalledWith(2, { priority: 10 });
   });
-  test("should process repeatable jobs", async () => {
+
+  it("should process repeatable jobs", async () => {
     const repeatableQueue = new MongoDBJobQueue(storage, {
       name: "repeatable-queue",
       concurrency: 1,
@@ -203,5 +206,37 @@ describe("MongoDBJobQueue", () => {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     repeatableQueue.stop();
     expect(repeatableHandler).toHaveBeenCalledTimes(3);
+  });
+
+  it("should handle intelligent polling", async () => {
+    const queue = new MongoDBJobQueue(storage, {
+      concurrency: 1,
+      processingInterval: 100,
+      intelligentPolling: true,
+      minInterval: 100,
+      maxInterval: 225,
+      maxEmptyPolls: 5,
+      loadFactor: 0.5,
+    });
+
+    const handler = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return { success: true };
+    });
+
+    const eventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      console.log(
+        "polling-interval-updated event received:",
+        event.data.message,
+      );
+      expect(event.data.message).toBeDefined();
+    });
+
+    queue.addEventListener("polling-interval-updated", eventListener);
+    queue.register("test-job", handler);
+    queue.start();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    queue.stop();
+    expect(eventListener).toHaveBeenCalledTimes(2);
   });
 });

@@ -19,6 +19,11 @@ export class PostgreSQLJobQueue extends JobQueue {
       name?: string;
       processingInterval?: number;
       logging?: boolean;
+      intelligentPolling?: boolean;
+      minInterval?: number;
+      maxInterval?: number;
+      maxEmptyPolls?: number;
+      loadFactor?: number;
     } = {},
   ) {
     super(storage, options);
@@ -32,30 +37,37 @@ export class PostgreSQLJobQueue extends JobQueue {
    * Override the parent's protected method
    */
   protected async processNextBatch(): Promise<void> {
-    if (this.activeJobs.size >= this.concurrency) {
-      return;
-    }
-    const availableSlots = this.concurrency - this.activeJobs.size;
-    for (let i = 0; i < availableSlots; i++) {
-      const job = await this.postgresStorage.acquireNextJob();
-      if (!job) {
-        break;
+    try {
+      if (this.activeJobs.size >= this.concurrency) {
+        return;
       }
-      if (this.logging) {
-        console.log(`[${this.name}] Processing job:`, job);
-        console.log(
-          `[${this.name}] Available handlers:`,
-          Array.from(this.handlers.keys()),
-        );
-        console.log(
-          `[${this.name}] Has handler for ${job.name}:`,
-          this.handlers.has(job.name),
-        );
+      const availableSlots = this.concurrency - this.activeJobs.size;
+      let jobsProcessed = 0;
+      for (let i = 0; i < availableSlots; i++) {
+        const job = await this.postgresStorage.acquireNextJob();
+        if (!job) {
+          break;
+        }
+        if (this.logging) {
+          console.log(`[${this.name}] Processing job:`, job);
+          console.log(
+            `[${this.name}] Available handlers:`,
+            Array.from(this.handlers.keys()),
+          );
+          console.log(
+            `[${this.name}] Has handler for ${job.name}:`,
+            this.handlers.has(job.name),
+          );
+        }
+        this.activeJobs.add(job.id);
+        this.processJob(job).finally(() => {
+          this.activeJobs.delete(job.id);
+        });
+        jobsProcessed++;
       }
-      this.activeJobs.add(job.id);
-      this.processJob(job).finally(() => {
-        this.activeJobs.delete(job.id);
-      });
+      this.updatePollingInterval(jobsProcessed > 0);
+    } catch (error) {
+      console.error(`[${this.name}] Error in processNextBatch:`, error);
     }
   }
 

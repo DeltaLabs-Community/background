@@ -27,6 +27,11 @@ export class DistributedJobQueue extends JobQueue {
       processingInterval?: number;
       maxRetries?: number;
       logging?: boolean;
+      intelligentPolling?: boolean;
+      minInterval?: number;
+      maxInterval?: number;
+      maxEmptyPolls?: number;
+      loadFactor?: number;
     } = {},
   ) {
     super(storage, options);
@@ -41,13 +46,13 @@ export class DistributedJobQueue extends JobQueue {
    * Override the parent's protected method
    */
   protected async processNextBatch(): Promise<void> {
-    if (this.activeJobs.size >= this.concurrency) {
-      return;
-    }
-    const availableSlots = this.concurrency - this.activeJobs.size;
-
-    for (let i = 0; i < availableSlots; i++) {
-      try {
+    try {
+      if (this.activeJobs.size >= this.concurrency) {
+        return;
+      }
+      const availableSlots = this.concurrency - this.activeJobs.size;
+      let jobsProcessed = 0;
+      for (let i = 0; i < availableSlots; i++) {
         const job = await this.redisStorage.acquireNextJob(this.jobTTL);
         if (!job) {
           break; // No more jobs available
@@ -75,9 +80,11 @@ export class DistributedJobQueue extends JobQueue {
           .finally(() => {
             this.activeJobs.delete(job.id);
           });
-      } catch (error) {
-        console.error(`[${this.queueName}] Error in processNextBatch:`, error);
+        jobsProcessed++;
       }
+      this.updatePollingInterval(jobsProcessed > 0);
+    } catch (error) {
+      console.error(`[${this.queueName}] Error in processNextBatch:`, error);
     }
   }
 
