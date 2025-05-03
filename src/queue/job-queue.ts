@@ -27,7 +27,8 @@ export class JobQueue extends EventTarget {
   protected maxRetries: number = 3;
   protected logging: boolean = false;
   private lastPollingInterval: number = 0;
-
+  private pollingErrorCount: number = 0;
+  protected standAlone: boolean = true;
   // Intelligent polling properties
   private intelligentPolling: boolean = false;
   private minInterval: number = 100; // Minimum polling interval (ms)
@@ -51,6 +52,7 @@ export class JobQueue extends EventTarget {
       maxEmptyPolls?: number;
       loadFactor?: number;
       maxConcurrency?: number;
+      standAlone?: boolean;
     } = {},
   ) {
     super();
@@ -61,7 +63,8 @@ export class JobQueue extends EventTarget {
     this.maxRetries = options.maxRetries || 3;
     this.logging = options.logging || false;
     this.lastPollingInterval = this.processingInterval;
-
+    this.pollingErrorCount = 0;
+    this.standAlone = options.standAlone || true;
     // Intelligent polling configuration
     this.intelligentPolling = options.intelligentPolling || false;
     if (this.intelligentPolling) {
@@ -84,7 +87,7 @@ export class JobQueue extends EventTarget {
     data: T,
     options?: { priority?: number },
   ): Promise<Job<T>> {
-    if (!this.handlers.has(name)) {
+    if (!this.handlers.has(name) && !this.standAlone) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
     const priority = options?.priority || 1;
@@ -110,7 +113,7 @@ export class JobQueue extends EventTarget {
 
   // Schedule a job to run at a specific time
   async schedule<T>(name: string, data: T, scheduledAt: Date): Promise<Job<T>> {
-    if (!this.handlers.has(name)) {
+    if (!this.handlers.has(name) && !this.standAlone) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
 
@@ -253,76 +256,94 @@ export class JobQueue extends EventTarget {
 
   // Update polling interval based on processing results
   protected updatePollingInterval(hadJobs: boolean): void {
-    if (!this.intelligentPolling) {
-      return; // Skip intelligent polling if disabled
-    }
-    if (hadJobs) {
-      // Jobs were found and processed
-      this.emptyPollsCount = 0;
+    try {
+      if (!this.intelligentPolling) {
+        return; // Skip intelligent polling if disabled
+      }
+      if (hadJobs) {
+        // Jobs were found and processed
+        this.emptyPollsCount = 0;
 
-      // Calculate current load factor
-      const currentLoad = this.activeJobs.size / this.concurrency;
+        // Calculate current load factor
+        const currentLoad = this.activeJobs.size / this.concurrency;
 
-      // Adjust interval based on load
-      if (currentLoad > this.loadFactor) {
-        // System is busy, poll more frequently
-        this.processingInterval = Math.max(
-          this.minInterval,
-          this.lastPollingInterval * 0.8,
-        );
-        if (this.concurrency < this.maxConcurrency) {
-          this.concurrency = Math.min(
-            this.maxConcurrency,
-            this.concurrency * 1.2,
+        // Adjust interval based on load
+        if (currentLoad > this.loadFactor) {
+          // System is busy, poll more frequently
+          this.processingInterval = Math.max(
+            this.minInterval,
+            this.lastPollingInterval * 0.8,
           );
+          if (this.concurrency < this.maxConcurrency) {
+            this.concurrency = Math.min(
+              this.maxConcurrency,
+              this.concurrency * 1.2,
+            );
+          }
+        } else {
+          // System is underutilized, poll less frequently
+          this.processingInterval = Math.min(
+            this.maxInterval,
+            this.lastPollingInterval * 1.2,
+          );
+          if (this.concurrency > 1) {
+            this.concurrency = Math.max(1, this.concurrency * 0.8);
+          }
         }
       } else {
-        // System is underutilized, poll less frequently
-        this.processingInterval = Math.min(
-          this.maxInterval,
-          this.lastPollingInterval * 1.2,
-        );
-        if (this.concurrency > 1) {
-          this.concurrency = Math.max(1, this.concurrency * 0.8);
+        // No jobs were found
+        this.emptyPollsCount++;
+
+        if (this.emptyPollsCount >= this.maxEmptyPolls) {
+          // Gradually increase interval when queue is empty
+          this.processingInterval = Math.min(
+            this.maxInterval,
+            this.lastPollingInterval * 1.5,
+          );
+          if (this.concurrency > 1) {
+            this.concurrency = Math.max(1, this.concurrency * 0.8);
+          }
+          this.emptyPollsCount = 0;
         }
       }
-    } else {
-      // No jobs were found
-      this.emptyPollsCount++;
 
-      if (this.emptyPollsCount >= this.maxEmptyPolls) {
-        // Gradually increase interval when queue is empty
-        this.processingInterval = Math.min(
-          this.maxInterval,
-          this.lastPollingInterval * 1.5,
+      // Update the interval if queue is running
+      if (
+        this.processing &&
+        this.intervalId &&
+        this.processingInterval !== this.lastPollingInterval
+      ) {
+        clearInterval(this.intervalId);
+        this.lastPollingInterval = this.processingInterval;
+        this.intervalId = setInterval(
+          () => this.processNextBatch(),
+          this.processingInterval,
         );
-        if (this.concurrency > 1) {
-          this.concurrency = Math.max(1, this.concurrency * 0.8);
+        this.dispatchEvent(
+          new QueueEvent("polling-interval-updated", {
+            message: `Polling interval adjusted to: ${this.processingInterval}ms`,
+          }),
+        );
+        if (this.logging) {
+          console.log(
+            `[${this.name}] Polling interval adjusted to: ${this.processingInterval}ms`,
+          );
         }
-        this.emptyPollsCount = 0;
       }
-    }
-
-    // Update the interval if queue is running
-    if (
-      this.processing &&
-      this.intervalId &&
-      this.processingInterval !== this.lastPollingInterval
-    ) {
-      clearInterval(this.intervalId);
-      this.lastPollingInterval = this.processingInterval;
-      this.intervalId = setInterval(
-        () => this.processNextBatch(),
-        this.processingInterval,
-      );
-      this.dispatchEvent(
-        new QueueEvent("polling-interval-updated", {
-          message: `Polling interval adjusted to: ${this.processingInterval}ms`,
-        }),
-      );
+    } catch (error) {
       if (this.logging) {
-        console.log(
-          `[${this.name}] Polling interval adjusted to: ${this.processingInterval}ms`,
+        console.error(`[${this.name}] Error in updatePollingInterval:`, error);
+        this.pollingErrorCount++;
+        if (this.pollingErrorCount >= 5) {
+          this.intelligentPolling = false;
+          console.log(
+            `[${this.name}] Intelligent polling disabled due to errors`,
+          );
+        }
+        this.dispatchEvent(
+          new QueueEvent("polling-interval-error", {
+            message: `Polling interval error: ${error}`,
+          }),
         );
       }
     }
@@ -371,83 +392,113 @@ export class JobQueue extends EventTarget {
 
   // Schedule the next occurrence of a repeatable job
   protected async scheduleNextRepeat(job: Job): Promise<void> {
-    if (!job.repeat) return;
+    try {
+      if (!job.repeat) return;
 
-    // Check if we've reached the repeat limit
-    if (job.repeat.limit) {
-      const executionCount = (job.retryCount || 0) + 1;
-      if (executionCount >= job.repeat.limit) {
+      // Check if we've reached the repeat limit
+      if (job.repeat.limit) {
+        const executionCount = (job.retryCount || 0) + 1;
+        if (executionCount >= job.repeat.limit) {
+          return; // Don't schedule another repeat
+        }
+      }
+      // Check if we've passed the end date
+      if (job.repeat.endDate && new Date() > job.repeat.endDate) {
         return; // Don't schedule another repeat
       }
-    }
-    // Check if we've passed the end date
-    if (job.repeat.endDate && new Date() > job.repeat.endDate) {
-      return; // Don't schedule another repeat
-    }
 
-    const nextExecutionTime = this.calculateNextExecutionTime(job);
-    // Create a new job with the same parameters
-    const newJob: Job = {
-      id: generateId(),
-      name: job.name,
-      data: job.data,
-      status: "pending",
-      createdAt: new Date(),
-      scheduledAt: nextExecutionTime,
-      priority: job.priority,
-      retryCount: (job.retryCount || 0) + 1,
-      repeat: job.repeat,
-    };
-    if (this.logging) {
-      console.log(
-        `[${this.name}] Scheduled repeatable job ${newJob.id} to run at ${nextExecutionTime}`,
+      const nextExecutionTime = this.calculateNextExecutionTime(job);
+
+      if (!nextExecutionTime) {
+        return;
+      }
+
+      // Create a new job with the same parameters
+      const newJob: Job = {
+        id: generateId(),
+        name: job.name,
+        data: job.data,
+        status: "pending",
+        createdAt: new Date(),
+        scheduledAt: nextExecutionTime,
+        priority: job.priority,
+        retryCount: (job.retryCount || 0) + 1,
+        repeat: job.repeat,
+      };
+      if (this.logging) {
+        console.log(
+          `[${this.name}] Scheduled repeatable job ${newJob.id} to run at ${nextExecutionTime}`,
+        );
+      }
+      await this.storage.saveJob(newJob);
+      this.dispatchEvent(
+        new QueueEvent("scheduled", { job: newJob, status: "pending" }),
+      );
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[${this.name}] Error in scheduleNextRepeat:`, error);
+      }
+      this.dispatchEvent(
+        new QueueEvent("scheduled-repeat-error", {
+          message: `Scheduled repeat error: ${error}`,
+        }),
       );
     }
-    await this.storage.saveJob(newJob);
-    this.dispatchEvent(
-      new QueueEvent("scheduled", { job: newJob, status: "pending" }),
-    );
   }
 
   // Calculate the next execution time based on the repeat configuration
-  protected calculateNextExecutionTime(job: Job): Date {
-    if (!job.repeat) {
-      throw new Error("Job does not have repeat configuration");
+  protected calculateNextExecutionTime(job: Job): Date | undefined {
+    try {
+      if (!job.repeat) {
+        throw new Error("Job does not have repeat configuration");
+      }
+
+      const now = new Date();
+      const { every, unit } = job.repeat;
+
+      if (every === undefined || unit === undefined) {
+        throw new Error("Invalid repeat configuration: missing every or unit");
+      }
+
+      let nextTime = new Date(now);
+
+      switch (unit) {
+        case "seconds":
+          nextTime.setSeconds(nextTime.getSeconds() + every);
+          break;
+        case "minutes":
+          nextTime.setMinutes(nextTime.getMinutes() + every);
+          break;
+        case "hours":
+          nextTime.setHours(nextTime.getHours() + every);
+          break;
+        case "days":
+          nextTime.setDate(nextTime.getDate() + every);
+          break;
+        case "weeks":
+          nextTime.setDate(nextTime.getDate() + every * 7);
+          break;
+        case "months":
+          nextTime.setMonth(nextTime.getMonth() + every);
+          break;
+        default:
+          throw new Error(`Unsupported repeat unit: ${unit}`);
+      }
+
+      return nextTime;
+    } catch (error) {
+      if (this.logging) {
+        console.error(
+          `[${this.name}] Error in calculateNextExecutionTime:`,
+          error,
+        );
+      }
+      this.dispatchEvent(
+        new QueueEvent("scheduled-repeat-error", {
+          message: `Scheduled repeat error: ${error}`,
+        }),
+      );
     }
-
-    const now = new Date();
-    const { every, unit } = job.repeat;
-
-    if (every === undefined || unit === undefined) {
-      throw new Error("Invalid repeat configuration: missing every or unit");
-    }
-
-    let nextTime = new Date(now);
-
-    switch (unit) {
-      case "seconds":
-        nextTime.setSeconds(nextTime.getSeconds() + every);
-        break;
-      case "minutes":
-        nextTime.setMinutes(nextTime.getMinutes() + every);
-        break;
-      case "hours":
-        nextTime.setHours(nextTime.getHours() + every);
-        break;
-      case "days":
-        nextTime.setDate(nextTime.getDate() + every);
-        break;
-      case "weeks":
-        nextTime.setDate(nextTime.getDate() + every * 7);
-        break;
-      case "months":
-        nextTime.setMonth(nextTime.getMonth() + every);
-        break;
-      default:
-        throw new Error(`Unsupported repeat unit: ${unit}`);
-    }
-
-    return nextTime;
   }
 
   // Add a repeatable job to the queue
@@ -463,12 +514,18 @@ export class JobQueue extends EventTarget {
       priority?: number;
     },
   ): Promise<Job<T>> {
-    if (!this.handlers.has(name)) {
+    if (!this.handlers.has(name) && !this.standAlone) {
+      if (this.logging) {
+        console.log(`[${this.name}] Job handler for "${name}" not registered`);
+      }
       throw new Error(`Job handler for "${name}" not registered`);
     }
 
     // Validate options
     if (options.every <= 0) {
+      if (this.logging) {
+        console.log(`[${this.name}] Repeat interval must be greater than 0`);
+      }
       throw new Error("Repeat interval must be greater than 0");
     }
 

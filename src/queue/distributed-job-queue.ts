@@ -1,7 +1,5 @@
 import { Job } from "../types";
 import { JobQueue } from "./job-queue";
-import { generateId } from "../utils/id-generator";
-import { QueueEvent } from "../utils/queue-event";
 import { RedisStorage } from "../storage/redis-storage";
 /**
  * DistributedJobQueue extends JobQueue to provide distributed processing
@@ -32,6 +30,7 @@ export class DistributedJobQueue extends JobQueue {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
+      standAlone?: boolean;
     } = {},
   ) {
     super(storage, options);
@@ -39,6 +38,7 @@ export class DistributedJobQueue extends JobQueue {
     this.jobTTL = options.jobTTL || 30;
     this.logging = options.logging || false;
     this.queueName = options.name || "distributed-queue";
+    this.standAlone = options.standAlone || true;
   }
 
   /**
@@ -84,7 +84,9 @@ export class DistributedJobQueue extends JobQueue {
       }
       this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
-      console.error(`[${this.queueName}] Error in processNextBatch:`, error);
+      if (this.logging) {
+        console.error(`[${this.queueName}] Error in processNextBatch:`, error);
+      }
     }
   }
 

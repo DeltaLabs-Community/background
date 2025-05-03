@@ -24,12 +24,14 @@ export class PostgreSQLJobQueue extends JobQueue {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
+      standAlone?: boolean;
     } = {},
   ) {
     super(storage, options);
     this.postgresStorage = storage as PostgreSQLJobStorage;
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
+    this.standAlone = options.standAlone || true;
   }
 
   /**
@@ -67,7 +69,9 @@ export class PostgreSQLJobQueue extends JobQueue {
       }
       this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
-      console.error(`[${this.name}] Error in processNextBatch:`, error);
+      if (this.logging) {
+        console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
     }
   }
 

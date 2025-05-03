@@ -24,10 +24,10 @@ declare global {
   interface EventTarget {
     addEventListener(
       type: string,
-      callback:
-        | EventListenerOrEventListenerObject
-        | ((evt: QueueEvent) => void),
-      options?: boolean | AddEventListenerOptions,
+      callback: EventListener | ((evt: QueueEvent) => void),
+      options?:
+        | boolean
+        | { capture?: boolean; once?: boolean; passive?: boolean },
     ): void;
   }
 }

@@ -18,12 +18,14 @@ export class MongoDBJobQueue extends JobQueue {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
+      standAlone?: boolean;
     } = {},
   ) {
     super(storage, options);
     this.mongodbStorage = storage as MongoDBJobStorage;
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
+    this.standAlone = options.standAlone || true;
   }
   /**
    * Process jobs with distributed locking
@@ -57,7 +59,9 @@ export class MongoDBJobQueue extends JobQueue {
         this.activeJobs.add(job.id);
         this.processJob(job)
           .catch((error) => {
-            console.error("Error processing job", error);
+            if (this.logging) {
+              console.error("Error processing job", error);
+            }
           })
           .finally(async () => {
             this.activeJobs.delete(job.id);
@@ -66,7 +70,9 @@ export class MongoDBJobQueue extends JobQueue {
       }
       this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
-      console.error(`[${this.name}] Error in processNextBatch:`, error);
+      if (this.logging) {
+        console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
     }
   }
 
