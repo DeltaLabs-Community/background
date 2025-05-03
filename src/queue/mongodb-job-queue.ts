@@ -33,7 +33,11 @@ export class MongoDBJobQueue extends JobQueue {
    */
   protected async processNextBatch(): Promise<void> {
     try {
-      if (this.activeJobs.size >= this.concurrency) {
+      if (this.isStopping && this.logging) {
+        console.log(`[${this.name}] Stopping job queue ... skipping`);
+      }
+
+      if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
       }
       const availableSlots = this.concurrency - this.activeJobs.size;

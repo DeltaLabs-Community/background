@@ -40,7 +40,10 @@ export class PostgreSQLJobQueue extends JobQueue {
    */
   protected async processNextBatch(): Promise<void> {
     try {
-      if (this.activeJobs.size >= this.concurrency) {
+      if (this.isStopping && this.logging) {
+        console.log(`[${this.name}] Stopping job queue ... skipping`);
+      }
+      if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
       }
       const availableSlots = this.concurrency - this.activeJobs.size;
@@ -86,6 +89,7 @@ export class PostgreSQLJobQueue extends JobQueue {
           `[${this.name}] Starting to process job ${job.id} (${job.name})`,
         );
       }
+
       await super.processJob(job);
       if (this.logging && job.repeat) {
         console.log(`[${this.name}] Completed repeatable job ${job.id}`);

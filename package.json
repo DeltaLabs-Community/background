@@ -8,16 +8,15 @@
   "types": "./dist/node/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/node/index.d.ts",
       "import": "./dist/bun/index.js",
-      "require": "./dist/node/index.js",
-      "types": "./dist/node/index.d.ts"
+      "require": "./dist/node/index.js"
     }
   },
   "scripts": {
     "build": "npm run build:node && npm run build:bun",
     "build:bun": "tsc -p tsconfig.bun.json",
     "build:node": "tsc -p tsconfig.node.json",
-    "test:bun": "bun test",
     "test:redis-storage": "vitest run tests/storages/redis-storage.test.ts",
     "test:storage": "vitest run tests/storages/in-memory-storage.test.ts",
     "test:distributed": "vitest run tests/queues/distributed-job-queue.test.ts",

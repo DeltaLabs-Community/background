@@ -37,6 +37,7 @@ export class JobQueue extends EventTarget {
   private maxEmptyPolls: number = 5; // Number of empty polls before increasing interval
   private loadFactor: number = 0.5; // Target load factor (0.0 to 1.0)
   private maxConcurrency: number = 10; // Maximum number of jobs that can be processed concurrently
+  protected isStopping: boolean = false;
 
   constructor(
     storage: JobStorage,
@@ -87,7 +88,7 @@ export class JobQueue extends EventTarget {
     data: T,
     options?: { priority?: number },
   ): Promise<Job<T>> {
-    if (!this.handlers.has(name) && !this.standAlone) {
+    if (this.standAlone && !this.handlers.has(name)) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
     const priority = options?.priority || 1;
@@ -113,7 +114,7 @@ export class JobQueue extends EventTarget {
 
   // Schedule a job to run at a specific time
   async schedule<T>(name: string, data: T, scheduledAt: Date): Promise<Job<T>> {
-    if (!this.handlers.has(name) && !this.standAlone) {
+    if (this.standAlone && !this.handlers.has(name)) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
 
@@ -172,9 +173,29 @@ export class JobQueue extends EventTarget {
     );
   }
 
+  async rollbackActiveJobs(): Promise<void> {
+    for (const jobId of this.activeJobs) {
+      const job = await this.storage.getJob(jobId);
+      if (job) {
+        job.status = "pending";
+        await this.storage.updateJob(job);
+      }
+    }
+  }
+
   // Stop processing jobs
-  stop(): void {
+  async stop(): Promise<void> {
     if (!this.processing) return;
+
+    if (this.activeJobs.size > 0) {
+      if (this.logging) {
+        console.log(
+          `[${this.name}] Stopping job queue with ${this.activeJobs.size} active jobs`,
+        );
+      }
+      await this.rollbackActiveJobs();
+      this.isStopping = true;
+    }
 
     if (this.logging) {
       console.log(`[${this.name}] Stopping job queue`);
@@ -210,8 +231,11 @@ export class JobQueue extends EventTarget {
   // Process the next batch of pending jobs
   protected async processNextBatch(): Promise<void> {
     try {
+      if (this.logging && this.isStopping) {
+        console.log(`[${this.name}] Stopping job queue ... skipping`);
+      }
       // Skip if we're already processing the maximum number of jobs
-      if (this.activeJobs.size >= this.concurrency) {
+      if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
       }
 
@@ -352,6 +376,10 @@ export class JobQueue extends EventTarget {
   // Process a single job
   protected async processJob(job: Job): Promise<void> {
     try {
+      if (this.isStopping) {
+        console.log(`[${this.name}] Stopping job queue ... skipping`);
+        return;
+      }
       if (job.status !== "processing") {
         // Mark job as processing
         job.status = "processing";

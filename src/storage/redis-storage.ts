@@ -1,7 +1,6 @@
 import { Job, JobStatus } from "../types";
 import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
-import { generateId } from "../utils/id-generator";
 
 /**
  * Redis storage adapter for JobQueue
@@ -383,120 +382,146 @@ export class RedisJobStorage implements RedisStorage {
    * Save a job to Redis using a Lua script
    */
   async saveJob(job: Job): Promise<void> {
-    const jobKey = this.getJobKey(job.id);
-    const statusKey = this.getStatusKey(job.status);
+    try {
+      const jobKey = this.getJobKey(job.id);
+      const statusKey = this.getStatusKey(job.status);
 
-    // Serialize job data properly for Redis
-    const serializedJob = this.serializeJob(job);
+      // Serialize job data properly for Redis
+      const serializedJob = this.serializeJob(job);
 
-    // Convert serialized job to flattened array for Lua
-    const jobDataArray: string[] = [];
-    Object.entries(serializedJob).forEach(([key, value]) => {
-      jobDataArray.push(key, value);
-    });
+      // Convert serialized job to flattened array for Lua
+      const jobDataArray: string[] = [];
+      Object.entries(serializedJob).forEach(([key, value]) => {
+        jobDataArray.push(key, value);
+      });
 
-    // Check if job is scheduled
-    const isScheduled =
-      job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
-    const scheduledTime = job.scheduledAt
-      ? job.scheduledAt.getTime().toString()
-      : "0";
-    const priority = String(job.priority || 3);
+      // Check if job is scheduled
+      const isScheduled =
+        job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
+      const scheduledTime = job.scheduledAt
+        ? job.scheduledAt.getTime().toString()
+        : "0";
+      const priority = String(job.priority || 3);
 
-    // Run the Lua script
-    await this.redis.eval(
-      this.saveJobScript,
-      4, // Number of keys
-      jobKey,
-      statusKey,
-      this.scheduledJobsKey,
-      this.keyPrefix + "priority:",
-      job.id,
-      job.status,
-      priority,
-      isScheduled,
-      scheduledTime,
-      ...jobDataArray,
-    );
+      // Run the Lua script
+      await this.redis.eval(
+        this.saveJobScript,
+        4, // Number of keys
+        jobKey,
+        statusKey,
+        this.scheduledJobsKey,
+        this.keyPrefix + "priority:",
+        job.id,
+        job.status,
+        priority,
+        isScheduled,
+        scheduledTime,
+        ...jobDataArray,
+      );
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error saving job:`, error);
+      }
+    }
   }
 
   /**
    * Get a job by ID
    */
   async getJob(id: string): Promise<Job | null> {
-    const jobKey = this.getJobKey(id);
-    const jobData = await this.redis.hgetall(jobKey);
-    if (!jobData || Object.keys(jobData).length === 0) return null;
-    return this.deserializeJob(jobData);
+    try {
+      const jobKey = this.getJobKey(id);
+      const jobData = await this.redis.hgetall(jobKey);
+      if (!jobData || Object.keys(jobData).length === 0) return null;
+      return this.deserializeJob(jobData);
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error getting job:`, error);
+      }
+      return null;
+    }
   }
 
   /**
    * Get jobs by status
    */
   async getJobsByStatus(status: JobStatus): Promise<Job[]> {
-    const statusKey = this.getStatusKey(status);
-    const jobIds = await this.redis.smembers(statusKey);
-    if (!jobIds.length) return [];
-    const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
-    return jobs.filter((job) => job !== null) as Job[];
+    try {
+      const statusKey = this.getStatusKey(status);
+      const jobIds = await this.redis.smembers(statusKey);
+      if (!jobIds.length) return [];
+      const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
+      return jobs.filter((job) => job !== null) as Job[];
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error getting jobs by status:`, error);
+      }
+      return [];
+    }
   }
 
   /**
    * Update a job using a Lua script
    */
   async updateJob(job: Job): Promise<void> {
-    const jobKey = this.getJobKey(job.id);
-    const newStatusKey = this.getStatusKey(job.status);
+    try {
+      const jobKey = this.getJobKey(job.id);
+      const newStatusKey = this.getStatusKey(job.status);
 
-    // Get current job to find its status
-    const existingJob = await this.getJob(job.id);
-    if (!existingJob) {
-      throw new Error(`Job ${job.id} not found`);
-    }
+      // Get current job to find its status
+      const existingJob = await this.getJob(job.id);
+      if (!existingJob) {
+        throw new Error(`Job ${job.id} not found`);
+      }
 
-    // Serialize job data properly for Redis
-    const serializedJob = this.serializeJob(job);
+      // Serialize job data properly for Redis
+      const serializedJob = this.serializeJob(job);
 
-    // Convert serialized job to flattened array for Lua
-    const jobDataArray: string[] = [];
-    Object.entries(serializedJob).forEach(([key, value]) => {
-      jobDataArray.push(key, value);
-    });
+      // Convert serialized job to flattened array for Lua
+      const jobDataArray: string[] = [];
+      Object.entries(serializedJob).forEach(([key, value]) => {
+        jobDataArray.push(key, value);
+      });
 
-    // Check if job is scheduled
-    const isScheduled =
-      job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
-    const scheduledTime = job.scheduledAt
-      ? job.scheduledAt.getTime().toString()
-      : "0";
-    const priority = String(job.priority || 3);
+      // Check if job is scheduled
+      const isScheduled =
+        job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
+      const scheduledTime = job.scheduledAt
+        ? job.scheduledAt.getTime().toString()
+        : "0";
+      const priority = String(job.priority || 3);
 
-    // Run the Lua script
-    const result = await this.redis.eval(
-      this.updateJobScript,
-      5, // Number of keys
-      jobKey,
-      newStatusKey,
-      this.scheduledJobsKey,
-      this.keyPrefix + "priority:",
-      this.keyPrefix + "status:", // Status set key prefix
-      job.id,
-      existingJob.status,
-      job.status,
-      priority,
-      isScheduled,
-      scheduledTime,
-      ...jobDataArray,
-    );
+      // Run the Lua script
+      const result = await this.redis.eval(
+        this.updateJobScript,
+        5, // Number of keys
+        jobKey,
+        newStatusKey,
+        this.scheduledJobsKey,
+        this.keyPrefix + "priority:",
+        this.keyPrefix + "status:", // Status set key prefix
+        job.id,
+        existingJob.status,
+        job.status,
+        priority,
+        isScheduled,
+        scheduledTime,
+        ...jobDataArray,
+      );
 
-    // Handle error result from Lua script
-    if (
-      result &&
-      typeof result === "object" &&
-      result !== null &&
-      "err" in result
-    ) {
-      throw new Error((result as { err: string }).err);
+      // Handle error result from Lua script
+      if (
+        result &&
+        typeof result === "object" &&
+        result !== null &&
+        "err" in result
+      ) {
+        throw new Error((result as { err: string }).err);
+      }
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error updating job:`, error);
+      }
     }
   }
 
@@ -505,33 +530,40 @@ export class RedisJobStorage implements RedisStorage {
    * @returns The next job or null if no job is available
    */
   async acquireNextJob(ttl: number = 30): Promise<Job | null> {
-    // First move scheduled jobs
-    await this.moveScheduledJobs();
+    try {
+      // First move scheduled jobs
+      await this.moveScheduledJobs();
 
-    // Run the Lua script to acquire a job
-    const jobId = await this.redis.eval(
-      this.acquireJobScript,
-      3, // Number of keys
-      this.keyPrefix + "priority:", // Priority queue key prefix
-      this.keyPrefix + "job:", // Job key prefix
-      this.keyPrefix + "status:", // Status set key prefix
-      new Date().toISOString(), // Current timestamp
-      String(ttl), // Job TTL
-    );
+      // Run the Lua script to acquire a job
+      const jobId = await this.redis.eval(
+        this.acquireJobScript,
+        3, // Number of keys
+        this.keyPrefix + "priority:", // Priority queue key prefix
+        this.keyPrefix + "job:", // Job key prefix
+        this.keyPrefix + "status:", // Status set key prefix
+        new Date().toISOString(), // Current timestamp
+        String(ttl), // Job TTL
+      );
 
-    if (!jobId) {
+      if (!jobId) {
+        return null;
+      }
+
+      // Get the full job data
+      const job = await this.getJob(jobId as string);
+
+      // Ensure we got a valid job with an ID
+      if (!job) {
+        return null;
+      }
+
+      return job;
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error acquiring next job:`, error);
+      }
       return null;
     }
-
-    // Get the full job data
-    const job = await this.getJob(jobId as string);
-
-    // Ensure we got a valid job with an ID
-    if (!job) {
-      return null;
-    }
-
-    return job;
   }
 
   /**
@@ -539,19 +571,26 @@ export class RedisJobStorage implements RedisStorage {
    * @private
    */
   private async moveScheduledJobs(): Promise<number> {
-    const now = Date.now();
+    try {
+      const now = Date.now();
 
-    // Run the Lua script
-    const movedCount = await this.redis.eval(
-      this.moveScheduledJobsScript,
-      3, // Number of keys
-      this.scheduledJobsKey,
-      this.keyPrefix + "job:",
-      this.keyPrefix + "priority:",
-      String(now),
-    );
+      // Run the Lua script
+      const movedCount = await this.redis.eval(
+        this.moveScheduledJobsScript,
+        3, // Number of keys
+        this.scheduledJobsKey,
+        this.keyPrefix + "job:",
+        this.keyPrefix + "priority:",
+        String(now),
+      );
 
-    return movedCount as number;
+      return movedCount as number;
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error moving scheduled jobs:`, error);
+      }
+      return 0;
+    }
   }
 
   /**
@@ -634,19 +673,29 @@ export class RedisJobStorage implements RedisStorage {
    * @returns Array of jobs with the specified priority
    */
   async getJobsByPriority(priority: number): Promise<Job[]> {
-    if (!this.priorityQueueKeys[priority]) {
-      throw new Error(
-        `Invalid priority: ${priority}. Must be between 1 and 10.`,
+    try {
+      if (!this.priorityQueueKeys[priority]) {
+        throw new Error(
+          `Invalid priority: ${priority}. Must be between 1 and 10.`,
+        );
+      }
+      const jobIds = await this.redis.lrange(
+        this.priorityQueueKeys[priority],
+        0,
+        -1,
       );
+      if (!jobIds.length) return [];
+      const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
+      return jobs.filter((job) => job !== null) as Job[];
+    } catch (error) {
+      if (this.logging) {
+        console.error(
+          `[RedisJobStorage] Error getting jobs by priority:`,
+          error,
+        );
+      }
+      return [];
     }
-    const jobIds = await this.redis.lrange(
-      this.priorityQueueKeys[priority],
-      0,
-      -1,
-    );
-    if (!jobIds.length) return [];
-    const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
-    return jobs.filter((job) => job !== null) as Job[];
   }
 
   /**
@@ -659,18 +708,25 @@ export class RedisJobStorage implements RedisStorage {
     startTime: Date = new Date(),
     endTime?: Date,
   ): Promise<Job[]> {
-    const start = startTime.getTime();
-    const end = endTime ? endTime.getTime() : "+inf";
+    try {
+      const start = startTime.getTime();
+      const end = endTime ? endTime.getTime() : "+inf";
 
-    const jobIds = await this.redis.zrangebyscore(
-      this.scheduledJobsKey,
-      start,
-      end,
-    );
-    if (!jobIds.length) return [];
+      const jobIds = await this.redis.zrangebyscore(
+        this.scheduledJobsKey,
+        start,
+        end,
+      );
+      if (!jobIds.length) return [];
 
-    const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
-    return jobs.filter((job) => job !== null) as Job[];
+      const jobs = await Promise.all(jobIds.map((id) => this.getJob(id)));
+      return jobs.filter((job) => job !== null) as Job[];
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error getting scheduled jobs:`, error);
+      }
+      return [];
+    }
   }
 
   /**
@@ -680,29 +736,35 @@ export class RedisJobStorage implements RedisStorage {
    * @param result - Result of the job
    */
   async completeJob(jobId: string, result: any): Promise<void> {
-    const jobKey = this.getJobKey(jobId);
-    const serializedResult = JSON.stringify(result);
-    const now = new Date().toISOString();
+    try {
+      const jobKey = this.getJobKey(jobId);
+      const serializedResult = JSON.stringify(result);
+      const now = new Date().toISOString();
 
-    // Run the Lua script to complete the job
-    const scriptResult = await this.redis.eval(
-      this.completeJobScript,
-      2, // Number of keys
-      jobKey,
-      this.keyPrefix + "status:",
-      jobId,
-      serializedResult,
-      now,
-    );
+      // Run the Lua script to complete the job
+      const scriptResult = await this.redis.eval(
+        this.completeJobScript,
+        2, // Number of keys
+        jobKey,
+        this.keyPrefix + "status:",
+        jobId,
+        serializedResult,
+        now,
+      );
 
-    // Handle error result from Lua script
-    if (
-      scriptResult &&
-      typeof scriptResult === "object" &&
-      scriptResult !== null &&
-      "err" in scriptResult
-    ) {
-      throw new Error((scriptResult as { err: string }).err);
+      // Handle error result from Lua script
+      if (
+        scriptResult &&
+        typeof scriptResult === "object" &&
+        scriptResult !== null &&
+        "err" in scriptResult
+      ) {
+        throw new Error((scriptResult as { err: string }).err);
+      }
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error completing job:`, error);
+      }
     }
   }
 
@@ -713,28 +775,34 @@ export class RedisJobStorage implements RedisStorage {
    * @param error - Error message
    */
   async failJob(jobId: string, error: string): Promise<void> {
-    const jobKey = this.getJobKey(jobId);
-    const now = new Date().toISOString();
+    try {
+      const jobKey = this.getJobKey(jobId);
+      const now = new Date().toISOString();
 
-    // Run the Lua script
-    const scriptResult = await this.redis.eval(
-      this.failJobScript,
-      2, // Number of keys
-      jobKey,
-      this.keyPrefix + "status:",
-      jobId,
-      error,
-      now,
-    );
+      // Run the Lua script
+      const scriptResult = await this.redis.eval(
+        this.failJobScript,
+        2, // Number of keys
+        jobKey,
+        this.keyPrefix + "status:",
+        jobId,
+        error,
+        now,
+      );
 
-    // Handle error result from Lua script
-    if (
-      scriptResult &&
-      typeof scriptResult === "object" &&
-      scriptResult !== null &&
-      "err" in scriptResult
-    ) {
-      throw new Error((scriptResult as { err: string }).err);
+      // Handle error result from Lua script
+      if (
+        scriptResult &&
+        typeof scriptResult === "object" &&
+        scriptResult !== null &&
+        "err" in scriptResult
+      ) {
+        throw new Error((scriptResult as { err: string }).err);
+      }
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error failing job:`, error);
+      }
     }
   }
 
@@ -742,6 +810,12 @@ export class RedisJobStorage implements RedisStorage {
    * Clear all jobs
    */
   async clear(): Promise<void> {
-    await this.redis.flushall();
+    try {
+      await this.redis.flushall();
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error clearing all jobs:`, error);
+      }
+    }
   }
 }

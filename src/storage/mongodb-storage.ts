@@ -32,7 +32,13 @@ export class MongoDBJobStorage implements JobStorage {
    * @param job - The job to save
    */
   async saveJob(job: Job): Promise<void> {
-    await this.collection.insertOne(job);
+    try {
+      await this.collection.insertOne(job);
+    } catch (error) {
+      if (this.logging) {
+        console.error("Error saving job", error);
+      }
+    }
   }
 
   /**
@@ -41,7 +47,14 @@ export class MongoDBJobStorage implements JobStorage {
    * @returns The job with the given ID, or null if the job does not exist
    */
   async getJob(id: string): Promise<Job | null> {
-    return await this.collection.findOne({ id });
+    try {
+      return await this.collection.findOne({ id });
+    } catch (error) {
+      if (this.logging) {
+        console.error("Error getting job", error);
+      }
+      return null;
+    }
   }
 
   /**
@@ -50,7 +63,14 @@ export class MongoDBJobStorage implements JobStorage {
    * @returns An array of jobs with the given status
    */
   async getJobsByStatus(status: JobStatus): Promise<Job[]> {
-    return await this.collection.find({ status }).toArray();
+    try {
+      return await this.collection.find({ status }).toArray();
+    } catch (error) {
+      if (this.logging) {
+        console.error("Error getting jobs by status", error);
+      }
+      return [];
+    }
   }
 
   /**
@@ -59,7 +79,13 @@ export class MongoDBJobStorage implements JobStorage {
    * @throws Error if the job is not found
    */
   async updateJob(job: Job): Promise<void> {
-    await this.collection.findOneAndUpdate({ id: job.id }, { $set: job });
+    try {
+      await this.collection.findOneAndUpdate({ id: job.id }, { $set: job });
+    } catch (error) {
+      if (this.logging) {
+        console.error("Error updating job", error);
+      }
+    }
   }
 
   /**
@@ -82,7 +108,7 @@ export class MongoDBJobStorage implements JobStorage {
       return job || null;
     } catch (error) {
       if (this.logging) {
-        console.error("Error acquiring next job", error);
+        console.error(`[MongoDBJobStorage] Error acquiring next job:`, error);
       }
       return null;
     }
@@ -100,9 +126,8 @@ export class MongoDBJobStorage implements JobStorage {
       );
     } catch (error) {
       if (this.logging) {
-        console.error("Error completing job", error);
+        console.error(`[MongoDBJobStorage] Error completing job:`, error);
       }
-      throw error;
     }
   }
   /**
@@ -118,9 +143,8 @@ export class MongoDBJobStorage implements JobStorage {
       );
     } catch (error) {
       if (this.logging) {
-        console.error("Error failing job", error);
+        console.error(`[MongoDBJobStorage] Error failing job:`, error);
       }
-      throw error;
     }
   }
 }
