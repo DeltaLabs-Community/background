@@ -14,7 +14,7 @@ const queue = new JobQueue(storage, {
   processingInterval: 1000,
 });
 
-const jobHandler = async (data: any) => {
+const jobHandler = async (data: { message: string }) => {
   await new Promise((resolve) => setTimeout(resolve, 3000));
   return data;
 };

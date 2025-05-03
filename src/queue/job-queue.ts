@@ -35,6 +35,7 @@ export class JobQueue extends EventTarget {
   private emptyPollsCount: number = 0;
   private maxEmptyPolls: number = 5; // Number of empty polls before increasing interval
   private loadFactor: number = 0.5; // Target load factor (0.0 to 1.0)
+  private maxConcurrency: number = 10; // Maximum number of jobs that can be processed concurrently
 
   constructor(
     storage: JobStorage,
@@ -49,6 +50,7 @@ export class JobQueue extends EventTarget {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
+      maxConcurrency?: number;
     } = {},
   ) {
     super();
@@ -67,6 +69,7 @@ export class JobQueue extends EventTarget {
       this.maxInterval = options.maxInterval || 5000;
       this.maxEmptyPolls = options.maxEmptyPolls || 5;
       this.loadFactor = options.loadFactor || 0.5;
+      this.maxConcurrency = options.maxConcurrency || 10;
     }
   }
 
@@ -267,12 +270,21 @@ export class JobQueue extends EventTarget {
           this.minInterval,
           this.lastPollingInterval * 0.8,
         );
+        if (this.concurrency < this.maxConcurrency) {
+          this.concurrency = Math.min(
+            this.maxConcurrency,
+            this.concurrency * 1.2,
+          );
+        }
       } else {
         // System is underutilized, poll less frequently
         this.processingInterval = Math.min(
           this.maxInterval,
           this.lastPollingInterval * 1.2,
         );
+        if (this.concurrency > 1) {
+          this.concurrency = Math.max(1, this.concurrency * 0.8);
+        }
       }
     } else {
       // No jobs were found
@@ -284,6 +296,9 @@ export class JobQueue extends EventTarget {
           this.maxInterval,
           this.lastPollingInterval * 1.5,
         );
+        if (this.concurrency > 1) {
+          this.concurrency = Math.max(1, this.concurrency * 0.8);
+        }
         this.emptyPollsCount = 0;
       }
     }
