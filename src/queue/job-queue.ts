@@ -522,8 +522,8 @@ export class JobQueue extends EventTarget {
         );
       }
       this.dispatchEvent(
-        new QueueEvent("scheduled-repeat-error", {
-          message: `Scheduled repeat error: ${error}`,
+        new QueueEvent("calculate-next-execution-time-error", {
+          message: `Calculate next execution time error: ${error}`,
         }),
       );
     }
