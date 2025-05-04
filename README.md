@@ -1,4 +1,4 @@
-# Pulse
+# Background
 
 An extendible background job queue for Nodejs and Bun
 
@@ -22,13 +22,13 @@ Please refer to the documentation site for detailed explanation.
 ### Node.js
 
 ```bash
-npm install @pulsejs/core
+npm install @backgroundjs/core
 ```
 
 ### Bun
 
 ```bash
-bun add @pulsejs/core
+bun add @backgroundjs/core
 ```
 
 ## License
