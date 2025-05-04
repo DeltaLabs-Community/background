@@ -1,6 +1,6 @@
 {
-  "name": "@pulsejs/core",
-  "version": "0.1.0",
+  "name": "@backgroundjs/core",
+  "version": "1.0.0",
   "description": "An extendible background job queue for js/ts applications",
   "type": "commonjs",
   "main": "./dist/node/index.js",
@@ -35,9 +35,9 @@
   "keywords": [
     "background-jobs",
     "queue",
-    "pulsejs",
+    "backgroundjs",
     "bun",
-    "pulse",
+    "background",
     "node",
     "typescript",
     "job-queue",

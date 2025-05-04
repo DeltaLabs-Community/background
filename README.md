@@ -16,7 +16,7 @@ An extendible background job queue for Nodejs and Bun
 ## Documentation
 
 Please refer to the documentation site for detailed explanation.
-
+[https://backgroundjs.dev/](https://backgroundjs.dev/)
 ## Installation
 
 ### Node.js
