@@ -315,7 +315,12 @@ export class JobQueue extends EventTarget {
             this.lastPollingInterval * 1.2,
           );
           if (this.concurrency > 1) {
-            this.concurrency = Math.max(1, this.concurrency * 0.8);
+            const decreasedConcurrency = Math.max(1, this.concurrency * 0.8);
+            if(decreasedConcurrency <= 1){
+              this.concurrency = 1;
+            }else{
+              this.concurrency = decreasedConcurrency;
+            }
           }
         }
       } else {
@@ -329,7 +334,12 @@ export class JobQueue extends EventTarget {
             this.lastPollingInterval * 1.5,
           );
           if (this.concurrency > 1) {
-            this.concurrency = Math.max(1, this.concurrency * 0.8);
+            const decreasedConcurrency = Math.max(1, this.concurrency * 0.8);
+            if(decreasedConcurrency <= 1){
+              this.concurrency = 1;
+            }else{
+              this.concurrency = decreasedConcurrency;
+            }
           }
           this.emptyPollsCount = 0;
         }
