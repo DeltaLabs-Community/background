@@ -24,10 +24,11 @@ const storage = new MongoDBJobStorage(client, {
 });
 
 const queue = new MongoDBJobQueue(storage, {
-  concurrency: 2,
+  concurrency: 1,
   maxRetries: 3,
   name: "test-queue",
-  processingInterval: 1000,
+  processingInterval: 500,
+  standAlone:false
 });
 
 queue.register("test-job", async (data) => {

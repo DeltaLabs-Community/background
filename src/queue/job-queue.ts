@@ -38,6 +38,7 @@ export class JobQueue extends EventTarget {
   private loadFactor: number = 0.5; // Target load factor (0.0 to 1.0)
   private maxConcurrency: number = 10; // Maximum number of jobs that can be processed concurrently
   protected isStopping: boolean = false;
+  private isUpdatingInterval = false;
 
   constructor(
     storage: JobStorage,
@@ -65,7 +66,7 @@ export class JobQueue extends EventTarget {
     this.logging = options.logging || false;
     this.lastPollingInterval = this.processingInterval;
     this.pollingErrorCount = 0;
-    this.standAlone = options.standAlone || true;
+    this.standAlone = options.standAlone ?? true;
     // Intelligent polling configuration
     this.intelligentPolling = options.intelligentPolling || false;
     if (this.intelligentPolling) {
@@ -158,9 +159,13 @@ export class JobQueue extends EventTarget {
     return this.name;
   }
 
+  isStandAlone(): boolean {
+    return this.standAlone;
+  }
+
   // Start processing jobs
   start(): void {
-    if (this.processing) return;
+    if (this.processing || this.isStopping || !this.standAlone) return;
 
     if (this.logging) {
       console.log(`[${this.name}] Starting job queue`);
@@ -280,7 +285,10 @@ export class JobQueue extends EventTarget {
 
   // Update polling interval based on processing results
   protected updatePollingInterval(hadJobs: boolean): void {
+    if (this.isUpdatingInterval) return;
+    
     try {
+      this.isUpdatingInterval = true;
       if (!this.intelligentPolling) {
         return; // Skip intelligent polling if disabled
       }
@@ -301,7 +309,7 @@ export class JobQueue extends EventTarget {
           if (this.concurrency < this.maxConcurrency) {
             this.concurrency = Math.min(
               this.maxConcurrency,
-              this.concurrency * 1.2,
+              Math.ceil(this.concurrency * 1.2),
             );
           }
         } else {
@@ -310,9 +318,7 @@ export class JobQueue extends EventTarget {
             this.maxInterval,
             this.lastPollingInterval * 1.2,
           );
-          if (this.concurrency > 1) {
-            this.concurrency = Math.max(1, this.concurrency * 0.8);
-          }
+          this.concurrency = Math.max(1, Math.floor(this.concurrency * 0.8));
         }
       } else {
         // No jobs were found
@@ -324,9 +330,7 @@ export class JobQueue extends EventTarget {
             this.maxInterval,
             this.lastPollingInterval * 1.5,
           );
-          if (this.concurrency > 1) {
-            this.concurrency = Math.max(1, this.concurrency * 0.8);
-          }
+          this.concurrency = Math.max(1, Math.floor(this.concurrency * 0.8));
           this.emptyPollsCount = 0;
         }
       }
@@ -370,6 +374,8 @@ export class JobQueue extends EventTarget {
           }),
         );
       }
+    } finally {
+      this.isUpdatingInterval = false;
     }
   }
 

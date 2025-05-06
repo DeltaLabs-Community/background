@@ -38,7 +38,7 @@ export class DistributedJobQueue extends JobQueue {
     this.jobTTL = options.jobTTL || 30;
     this.logging = options.logging || false;
     this.queueName = options.name || "distributed-queue";
-    this.standAlone = options.standAlone || true;
+    this.standAlone = options.standAlone ?? true;
   }
 
   /**
