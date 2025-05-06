@@ -65,7 +65,7 @@ export class JobQueue extends EventTarget {
     this.logging = options.logging || false;
     this.lastPollingInterval = this.processingInterval;
     this.pollingErrorCount = 0;
-    this.standAlone = options.standAlone || true;
+    this.standAlone = options.standAlone ?? true;
     // Intelligent polling configuration
     this.intelligentPolling = options.intelligentPolling || false;
     if (this.intelligentPolling) {
@@ -158,9 +158,13 @@ export class JobQueue extends EventTarget {
     return this.name;
   }
 
+  isStandAlone(): boolean {
+    return this.standAlone;
+  }
+
   // Start processing jobs
   start(): void {
-    if (this.processing) return;
+    if (this.processing || this.isStopping || !this.standAlone) return;
 
     if (this.logging) {
       console.log(`[${this.name}] Starting job queue`);

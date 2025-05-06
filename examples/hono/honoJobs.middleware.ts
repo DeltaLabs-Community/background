@@ -4,7 +4,9 @@ import { JobQueue } from "../../src";
 export const honoJobs = (app: Hono, queues: JobQueue[]) => {
   // Start all queues first
   queues.forEach((queue) => {
-    queue.start();
+    if (queue.isStandAlone()) {
+      queue.start();
+    }
   });
 
   // Add middleware to make queues available in context via Variables API
@@ -18,7 +20,9 @@ export const honoJobs = (app: Hono, queues: JobQueue[]) => {
   ["SIGTERM", "SIGINT", "SIGKILL"].forEach((signal) => {
     process.on(signal, () => {
       queues.forEach((queue) => {
-        queue.stop();
+        if (queue.isStandAlone()) {
+          queue.stop();
+        }
       });
     });
   });

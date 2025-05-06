@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import {
   PostgreSQLJobQueue,
-  PostgreSQLJobStorage,
-  QueueEvent,
+  PostgreSQLJobStorage
 } from "../../src";
 import { serve } from "@hono/node-server";
 import dotenv from "dotenv";
@@ -23,15 +22,7 @@ const queue = new PostgreSQLJobQueue(storage, {
   maxRetries: 3,
   name: "test-queue",
   processingInterval: 1000,
-});
-
-queue.register("test-job", async (data) => {
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  return data;
-});
-
-queue.addEventListener("completed", async (event: QueueEvent) => {
-  console.log(event.data);
+  standAlone:false
 });
 
 honoJobs(app, [queue]);

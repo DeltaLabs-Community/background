@@ -25,7 +25,7 @@ export class MongoDBJobQueue extends JobQueue {
     this.mongodbStorage = storage as MongoDBJobStorage;
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
-    this.standAlone = options.standAlone || true;
+    this.standAlone = options.standAlone ?? true;
   }
   /**
    * Process jobs with distributed locking
