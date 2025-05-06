@@ -314,14 +314,7 @@ export class JobQueue extends EventTarget {
             this.maxInterval,
             this.lastPollingInterval * 1.2,
           );
-          if (this.concurrency > 1) {
-            const decreasedConcurrency = Math.max(1, this.concurrency * 0.8);
-            if(decreasedConcurrency <= 1){
-              this.concurrency = 1;
-            }else{
-              this.concurrency = decreasedConcurrency;
-            }
-          }
+          this.concurrency = Math.max(1, this.concurrency * 0.8);
         }
       } else {
         // No jobs were found
@@ -333,14 +326,7 @@ export class JobQueue extends EventTarget {
             this.maxInterval,
             this.lastPollingInterval * 1.5,
           );
-          if (this.concurrency > 1) {
-            const decreasedConcurrency = Math.max(1, this.concurrency * 0.8);
-            if(decreasedConcurrency <= 1){
-              this.concurrency = 1;
-            }else{
-              this.concurrency = decreasedConcurrency;
-            }
-          }
+          this.concurrency = Math.max(1, this.concurrency * 0.8);
           this.emptyPollsCount = 0;
         }
       }
