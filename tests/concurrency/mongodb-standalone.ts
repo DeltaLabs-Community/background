@@ -17,7 +17,7 @@ const queue = new MongoDBJobQueue(storage, {
   maxRetries: 3,
 });
 
-queue.register("test", async (data) => {
+queue.register("test-job", async (data) => {
     await new Promise((resolve) => setTimeout(resolve, 3000));
 });
 
