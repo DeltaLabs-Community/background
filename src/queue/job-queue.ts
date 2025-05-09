@@ -286,7 +286,7 @@ export class JobQueue extends EventTarget {
   // Update polling interval based on processing results
   protected updatePollingInterval(hadJobs: boolean): void {
     if (this.isUpdatingInterval) return;
-    
+
     try {
       this.isUpdatingInterval = true;
       if (!this.intelligentPolling) {
@@ -349,12 +349,12 @@ export class JobQueue extends EventTarget {
         );
         this.dispatchEvent(
           new QueueEvent("polling-interval-updated", {
-            message: `Polling interval adjusted to: ${this.processingInterval}ms`,
+            message: `Polling interval adjusted to: ${this.processingInterval}ms. Concurrency: ${this.concurrency}`,
           }),
         );
         if (this.logging) {
           console.log(
-            `[${this.name}] Polling interval adjusted to: ${this.processingInterval}ms`,
+            `[${this.name}] Polling interval adjusted to: ${this.processingInterval}ms. Concurrency: ${this.concurrency}`,
           );
         }
       }
