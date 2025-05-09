@@ -1,6 +1,6 @@
 {
   "name": "@backgroundjs/core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An extendible background job queue for js/ts applications",
   "type": "commonjs",
   "main": "./dist/node/index.js",
@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "build": "npm run build:node && npm run build:bun",
+    "build": "npm run clean && npm run build:node && npm run build:bun",
     "build:bun": "tsc -p tsconfig.bun.json",
     "build:node": "tsc -p tsconfig.node.json",
     "test:redis-storage": "vitest run tests/storages/redis-storage.test.ts",
