@@ -1,6 +1,6 @@
 import express from "express";
 import { expressJobs } from "./expressJobs.middleware";
-import { InMemoryJobStorage, JobQueue } from "../../src";
+import { InMemoryJobStorage, JobQueue, QueueEvent } from "../../src";
 
 const app = express();
 app.use(express.json());
@@ -11,18 +11,16 @@ const queue = new JobQueue(storage, {
   concurrency: 1,
   processingInterval: 200,
   logging: true,
-  intelligentPolling: true,
-  minInterval: 100,
-  maxInterval: 5000,
-  maxEmptyPolls: 5,
-  loadFactor: 0.5,
-  maxConcurrency: 10,
+  intelligentPolling: false,
 });
 
 queue.register("test-job", async (data) => {
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  console.log("job completed", data);
   return data;
+});
+
+queue.addEventListener("completed", (event:QueueEvent) => {
+  console.log("job completed", event.data.job?.id);
 });
 
 expressJobs(app, [queue]);

@@ -27,14 +27,13 @@ describe("PostgreSQLJobQueue", () => {
         "postgresql://postgres:12345@localhost:5432/postgres",
     });
 
-    await pool.query("DELETE FROM jobs");
-
-    storage = new PostgreSQLJobStorage(pool, { tableName: "jobs" });
+    storage = new PostgreSQLJobStorage(pool, { tableName: "jobs", logging: true });
     queue = new PostgreSQLJobQueue(storage, {
       name: "test-queue",
       concurrency: 1,
       maxRetries: 2,
       processingInterval: 100,
+      logging: true,
     });
 
     // Mock job handler
@@ -46,15 +45,14 @@ describe("PostgreSQLJobQueue", () => {
   });
 
   // Clean up after each test
-  afterEach(() => {
+  afterEach(async () => {
     // Reset mocks
     vi.resetAllMocks();
-
-    // Stop the queue if it's processing
+    await pool.query("DELETE FROM jobs");
     queue.stop();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
     pool.end();
   });
 

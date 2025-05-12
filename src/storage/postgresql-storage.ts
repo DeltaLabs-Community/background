@@ -19,6 +19,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
   private readonly tableName: string;
   private initialized: boolean = false;
   private readonly logging: boolean = false;
+  private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
   /**
    * Create a new PostgreSQL job storage
    *
@@ -27,11 +28,12 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    */
   constructor(
     pool: Pool,
-    options: { tableName?: string; logging?: boolean } = {},
+    options: { tableName?: string; logging?: boolean; staleJobTimeout?: number } = {},
   ) {
     this.pool = pool;
     this.tableName = options.tableName || "jobs";
     this.logging = options.logging || false;
+    this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
   }
 
   /**
@@ -54,7 +56,9 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           priority INTEGER DEFAULT 0,
           result JSONB,
           repeat JSONB,
-          retry_count INTEGER DEFAULT 0)
+          retry_count INTEGER DEFAULT 0,
+          timeout INTEGER
+        )
       `);
 
       await client.query(`
@@ -84,8 +88,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       }
       await this.pool.query(
         `INSERT INTO ${this.tableName} (
-          id, name, data, status, created_at, scheduled_at, retry_count, priority, repeat
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          id, name, data, status, created_at, scheduled_at, retry_count, priority, repeat, timeout
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           job.id,
           job.name,
@@ -96,6 +100,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           job.retryCount || 0,
           job.priority || 0,
           JSON.stringify(job.repeat),
+          job.timeout || null,
         ],
       );
     } catch (error) {
@@ -176,7 +181,8 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           result = $9,
           repeat = $10,
           retry_count = $11,
-          priority = $12
+          timeout = $12,
+          priority = $13
         WHERE id = $1`,
         [
           job.id,
@@ -190,6 +196,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           job.result ? JSON.stringify(job.result) : null,
           job.repeat ? JSON.stringify(job.repeat) : null,
           job.retryCount || 0,
+          job.timeout || null,
           job.priority || 0,
         ],
       );
@@ -219,9 +226,18 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       // Use the server's current time for the scheduled_at check
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
-        WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= $1)
+        WHERE (
+          status = 'pending' 
+          AND (scheduled_at IS NULL OR scheduled_at <= $1)
+        )
+        OR (
+          status = 'processing' 
+          AND started_at IS NOT NULL 
+          AND completed_at IS NULL 
+          AND started_at < $2
+        )
         ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
-        [new Date()],
+        [new Date(), new Date(Date.now() - this.staleJobTimeout)],
       );
 
       if (query.rows.length === 0) {
@@ -323,6 +339,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
           : row.repeat
         : undefined,
       retryCount: row.retry_count || 0,
+      timeout: row.timeout || undefined,
     };
   }
 }

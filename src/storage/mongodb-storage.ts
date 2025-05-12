@@ -16,16 +16,18 @@ export class MongoDBJobStorage implements JobStorage {
   private readonly collection: Collection<Job>;
   private readonly mongoClient: MongoClient;
   private readonly logging: boolean = false;
+  private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 
   constructor(
     mongoClient: MongoClient,
-    options: { collectionName?: string; logging?: boolean } = {},
+    options: { collectionName?: string; logging?: boolean; staleJobTimeout?: number } = {},
   ) {
     this.mongoClient = mongoClient;
     this.collection = this.mongoClient
       .db()
       .collection(options.collectionName || "jobs");
     this.logging = options.logging || false;
+    this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
   }
   /**
    * Save a job
@@ -96,10 +98,22 @@ export class MongoDBJobStorage implements JobStorage {
     try {
       const job = await this.collection.findOneAndUpdate(
         {
-          status: "pending",
           $or: [
-            { scheduledAt: { $exists: false } },
-            { scheduledAt: { $lte: new Date() } },
+            {
+              status: "pending",
+              $or: [
+                { scheduledAt: { $exists: false } },
+                { scheduledAt: { $lte: new Date() } },
+              ],
+            },
+            {
+              status: "processing",
+              startedAt: { 
+                $exists: true,
+                $lte: new Date(Date.now() - this.staleJobTimeout) 
+              },
+              completedAt: { $exists: false },
+            },
           ],
         },
         { $set: { status: "processing", startedAt: new Date() } },
