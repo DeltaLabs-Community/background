@@ -1,6 +1,6 @@
 {
   "name": "@backgroundjs/core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "An extendible background job queue for js/ts applications",
   "type": "module",
   "main": "./dist/node/index.js",

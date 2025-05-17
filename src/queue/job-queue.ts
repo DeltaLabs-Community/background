@@ -475,7 +475,7 @@ export class JobQueue extends EventTarget {
 
     } catch (error) {
       if (this.logging) {
-        console.error(`[${this.name}] Error processing job ${job.id}: ${error.message}`);
+        console.error(`[${this.name}] Error processing job`);
       }
       this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
       throw error;
