@@ -440,19 +440,26 @@ export class JobQueue extends EventTarget {
         throw new Error(`Handler for job "${job.name}" not found`);
       }
 
-      // Execute the handler
+
       const result = await Promise.race([
         handler(job.data),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout exceeded')), job.timeout || 10000)
-        ),
+        new Promise((_, reject) => {
+          const timeoutMs = job.timeout || 10000;
+          const timeoutId = setTimeout(() => {
+            reject(new Error(`Job timeout exceeded (${timeoutMs}ms)`));
+          }, timeoutMs);
+          // Ensure timeoutId is used to prevent optimization
+          if (this.logging) {
+            console.log(`[${this.name}] Set timeout ${timeoutId} for job ${job.id} (${timeoutMs}ms)`);
+          }
+        })
       ]);
 
       if (this.isStopping) {
         console.log(`[${this.name}] Queue is stopping, skipping job ${job.id}`);
         return;
       }
-      // Mark job as completed
+
       await this.storage.completeJob(job.id, result);
       this.dispatchEvent(
         new QueueEvent("completed", { job, status: "completed" }),
@@ -461,17 +468,16 @@ export class JobQueue extends EventTarget {
       if (this.logging) {
         console.log(`[${this.name}] Completed job ${job.id}`);
       }
-      
-      // Handle repeatable jobs only if we're not stopping
+        
       if (job.repeat && !this.isStopping) {
         await this.scheduleNextRepeat(job);
       }
+
     } catch (error) {
-      
-      this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
       if (this.logging) {
-        console.log(`[${this.name}] Failed job ${job.id}`);
+        console.error(`[${this.name}] Error processing job ${job.id}: ${error.message}`);
       }
+      this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
       throw error;
     }
   }

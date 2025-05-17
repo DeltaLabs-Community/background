@@ -96,30 +96,35 @@ export class MongoDBJobStorage implements JobStorage {
    */
   async acquireNextJob(): Promise<Job | null> {
     try {
-      const job = await this.collection.findOneAndUpdate(
+      const staleThreshold = new Date(Date.now() - this.staleJobTimeout);
+      // First try to find pending jobs
+      let job = await this.collection.findOneAndUpdate(
         {
+          status: "pending",
           $or: [
-            {
-              status: "pending",
-              $or: [
-                { scheduledAt: { $exists: false } },
-                { scheduledAt: { $lte: new Date() } },
-              ],
-            },
-            {
-              status: "processing",
-              startedAt: { 
-                $exists: true,
-                $lte: new Date(Date.now() - this.staleJobTimeout) 
-              },
-              completedAt: { $exists: false },
-            },
+            { scheduledAt: { $exists: false } },
+            { scheduledAt: { $lte: new Date() } },
           ],
         },
         { $set: { status: "processing", startedAt: new Date() } },
-        { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" },
+        { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" }
       );
-      return job || null;
+      
+      if (!job) {
+        job = await this.collection.findOneAndUpdate(
+          {
+            status: "processing",
+            startedAt: { $lte: staleThreshold } as any,
+            $or: [
+              { completedAt: { $exists: false } } as any,
+              { completedAt: null } as any
+            ]
+          },
+          { $set: { startedAt: new Date() } },
+          { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" }
+        );
+      }
+      return job;
     } catch (error) {
       if (this.logging) {
         console.error(`[MongoDBJobStorage] Error acquiring next job:`, error);

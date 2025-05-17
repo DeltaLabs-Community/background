@@ -10,7 +10,7 @@ import {
 import { MongoDBJobStorage } from "../../src/storage/mongodb-storage";
 import { MongoDBJobQueue } from "../../src/queue/mongodb-job-queue";
 import { MongoClient } from "mongodb";
-import { JobHandler } from "../../src/types";
+import { Job, JobHandler } from "../../src/types";
 import dotenv from "dotenv";
 import { QueueEvent } from "../../src/utils/queue-event";
 
@@ -38,7 +38,7 @@ describe("MongoDBJobQueue", () => {
     }
     await mongoClient.db().collection("jobs").deleteMany({});
 
-    storage = new MongoDBJobStorage(mongoClient, { collectionName: "jobs" });
+    storage = new MongoDBJobStorage(mongoClient, { collectionName: "jobs",staleJobTimeout:1000 });
     queue = new MongoDBJobQueue(storage, {
       name: "test-queue",
       concurrency: 2,
@@ -239,4 +239,112 @@ describe("MongoDBJobQueue", () => {
     queue.stop();
     expect(eventListener).toHaveBeenCalledTimes(2);
   });
+  
+  it("should timeout after some timeout",async()=>{
+    const jobqueue = new MongoDBJobQueue(storage,{
+      concurrency:1,
+      logging:true,
+      processingInterval:100
+    })
+    const timeoutHandler = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      return { success: true };
+    });
+    const failedEventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      expect(event.data.status).toBe("failed");
+    });
+    jobqueue.addEventListener("failed",failedEventListener)
+    jobqueue.register("test-job",timeoutHandler);
+    jobqueue.add("test-job",{message:"test"},{timeout:500})
+    jobqueue.start();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    jobqueue.stop();
+    expect(timeoutHandler).toHaveBeenCalled();
+    expect(failedEventListener).toHaveBeenCalled();
+  });
+
+  it("it should process stale jobs",async()=>{
+    let stalted = false;
+
+    // Explicitly set a short stale job timeout
+    const staleJobTimeout = 1000; // 1 second
+    
+    // Recreate storage with explicit short timeout and logging
+    storage = new MongoDBJobStorage(mongoClient, { 
+      collectionName: "jobs", 
+      staleJobTimeout: staleJobTimeout,
+      logging: true 
+    });
+    
+    console.log("Stale job timeout set to:", staleJobTimeout);
+
+    const jobqueue = new MongoDBJobQueue(storage,{
+      concurrency:1,
+      logging:true,
+      processingInterval:100
+    })
+
+    const staleHandler = vi.fn().mockImplementation(async ({message}:{message:string}) => {
+      console.log("staleHandler called with:", message);
+      return { success: true, message };
+    });
+
+    const completedEventListener = vi.fn().mockImplementation(async (event: QueueEvent) => {
+      console.log("Job completed event:", event.data.status);
+      expect(event.data.status).toBe("completed");
+      
+      const jobId = event.data?.job?.id;
+      if(!jobId){
+        throw new Error("Job ID is required");
+      }
+      
+      // stale the job manually
+      const job = await storage.getJob(jobId);
+      if(!job){
+        throw new Error("Job not found");
+      }
+      
+      if(stalted){
+        return;
+      }
+      try {
+        // Create a date that's clearly in the past, beyond the stale threshold
+        const pastDate = new Date(Date.now() - (staleJobTimeout * 2));        
+        // Debug the exact stale job we're creating
+        const staleJob = {
+          id: jobId,
+          status: "processing",
+          startedAt: pastDate,
+          completedAt: undefined,
+          error: undefined,
+          result: undefined,
+          retryCount: 0,
+          repeat: false,
+          timeout: 1000,
+          priority: 1,
+          name: "stale-job",
+          data: {message: "test"},
+          createdAt: pastDate,
+        };
+        await storage.updateJob(staleJob as unknown as Job);
+        console.log("Stale job created successfully");
+        stalted = true;
+      } catch (error) {
+        console.error("Error staling job", error);
+      }
+    })
+
+    jobqueue.addEventListener("completed", completedEventListener);
+    jobqueue.register("stale-job", staleHandler);
+    await jobqueue.add("stale-job", {message: "test"});
+    jobqueue.start();
+    
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    console.log("Stopping job queue");
+    jobqueue.stop();
+    
+    expect(completedEventListener).toHaveBeenCalledTimes(2);
+    expect(staleHandler).toHaveBeenCalledTimes(2);
+  })
 });

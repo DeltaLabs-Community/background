@@ -10,7 +10,7 @@ import {
 import { PostgreSQLJobStorage } from "../../src/storage/postgresql-storage";
 import { PostgreSQLJobQueue } from "../../src/queue/postgresql-job-queue";
 import { Pool } from "pg";
-import { JobHandler } from "../../src/types";
+import { Job, JobHandler } from "../../src/types";
 import dotenv from "dotenv";
 import { QueueEvent } from "../../src/utils/queue-event";
 describe("PostgreSQLJobQueue", () => {
@@ -27,7 +27,7 @@ describe("PostgreSQLJobQueue", () => {
         "postgresql://postgres:12345@localhost:5432/postgres",
     });
 
-    storage = new PostgreSQLJobStorage(pool, { tableName: "jobs", logging: true });
+    storage = new PostgreSQLJobStorage(pool, { tableName: "jobs", logging: true,staleJobTimeout:1000 });
     queue = new PostgreSQLJobQueue(storage, {
       name: "test-queue",
       concurrency: 1,
@@ -50,10 +50,6 @@ describe("PostgreSQLJobQueue", () => {
     vi.resetAllMocks();
     await pool.query("DELETE FROM jobs");
     queue.stop();
-  });
-
-  afterAll(async () => {
-    pool.end();
   });
 
   it("should add a job to the queue", async () => {
@@ -230,4 +226,86 @@ describe("PostgreSQLJobQueue", () => {
     queue.stop();
     expect(eventListener).toHaveBeenCalledTimes(2);
   });
+
+  it("should timeout a job if it takes too long", async () => {
+    const timeoutHandler = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      return { success: true };
+    });
+
+    const failedEventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      expect(event.data.status).toBe("failed");
+    });
+
+    queue.addEventListener("failed", failedEventListener);
+    queue.register("timeout-job", timeoutHandler);
+    await queue.add("timeout-job", { timeout: true }, { timeout: 500 });
+    queue.start();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    queue.stop();
+    expect(timeoutHandler).toHaveBeenCalled();
+    expect(failedEventListener).toHaveBeenCalled();
+  });
+
+  it("it should process stale jobs",async()=>{
+    let stalted = false;
+    const staleHandler = vi.fn().mockImplementation(async ({message}:{message:string}) => {
+      console.log("staleHandler",message);
+      return { success: true,message };
+    });
+
+    const completedEventListener = vi.fn().mockImplementation(async (event: QueueEvent) => {
+      expect(event.data.status).toBe("completed");
+      const jobId = event.data?.job?.id;
+      if(!jobId){
+        throw new Error("Job ID is required");
+      }
+      // stale the job manually
+      const job = await storage.getJob(jobId);
+      if(!job){
+        throw new Error("Job not found");
+      }
+      if(stalted){
+        return;
+      }
+      try {
+        const pastDate = new Date(Date.now() - 3000);
+        
+        await storage.updateJob({
+          id:jobId,
+          status:"processing",
+          startedAt: pastDate,
+          completedAt:undefined,
+          error:undefined,
+          result:undefined,
+          retryCount:0,
+          repeat:false,
+          timeout:1000,
+          priority:1,
+          name:"stale-job",
+          data:{message:"test"},
+          createdAt: pastDate,
+        } as unknown as Job);
+        
+        console.log("Successfully created stale job");
+        stalted = true;
+      } catch (error) {
+        console.error("Error staling job", error);
+      }
+    });
+
+    queue.register("stale-job",staleHandler);
+    queue.addEventListener("completed",completedEventListener);
+    await queue.add("stale-job",{message:"test"})
+    
+    queue.start();
+    // Give enough time for:
+    // 1. The original job to complete
+    // 2. The job to be marked as stale
+    // 3. The queue to detect and reprocess the stale job
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    queue.stop();
+    expect(completedEventListener).toHaveBeenCalledTimes(2);
+    expect(staleHandler).toHaveBeenCalledTimes(2);
+  })
 });
