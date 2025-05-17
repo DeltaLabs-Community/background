@@ -35,10 +35,11 @@ export class RedisJobStorage implements RedisStorage {
   // Lua scripts
   private readonly saveJobScript: string;
   private readonly updateJobScript: string;
-  private readonly acquireJobScript: string;
   private readonly moveScheduledJobsScript: string;
   private readonly completeJobScript: string;
   private readonly failJobScript: string;
+
+  private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 
   /**
    * Create a new RedisJobStorage
@@ -48,7 +49,7 @@ export class RedisJobStorage implements RedisStorage {
    */
   constructor(
     redis: Redis,
-    options: { keyPrefix?: string; logging?: boolean } = {},
+    options: { keyPrefix?: string; logging?: boolean; staleJobTimeout?: number } = {},
   ) {
     this.redis = redis;
     this.keyPrefix = options.keyPrefix || "jobqueue:";
@@ -67,6 +68,7 @@ export class RedisJobStorage implements RedisStorage {
       10: `${this.keyPrefix}priority:10`,
     };
     this.logging = options.logging || false;
+    this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
     // Define Lua script for saveJob
     this.saveJobScript = `
       -- Arguments:
@@ -191,57 +193,6 @@ export class RedisJobStorage implements RedisStorage {
       end
       
       return 1
-    `;
-
-    // Define Lua script for acquireNextJob
-    this.acquireJobScript = `
-      -- Arguments:
-      -- KEYS[1]: Priority queue key prefix
-      -- KEYS[2]: Job key prefix
-      -- KEYS[3]: Status set key prefix
-      
-      -- ARGV[1]: Current timestamp (ISO string)
-      -- ARGV[2]: TTL for job lock (seconds)
-      
-      -- Try to get a job from each priority queue in order
-      local jobId = nil
-      for priority = 1, 10 do
-        local queueKey = KEYS[1] .. priority
-        jobId = redis.call('RPOP', queueKey)
-        if jobId then
-          break
-        end
-      end
-      
-      if not jobId then
-        return nil
-      end
-      
-      -- Get the job data
-      local jobKey = KEYS[2] .. jobId
-      
-      -- Check if job exists
-      if redis.call('EXISTS', jobKey) == 0 then
-        return nil
-      end
-      
-      -- Get current status
-      local status = redis.call('HGET', jobKey, 'status')
-      
-      -- Update job status and startedAt
-      redis.call('HSET', jobKey, 'status', 'processing', 'startedAt', ARGV[1])
-      
-      -- Update status sets
-      if status then
-        redis.call('SREM', KEYS[3] .. status, jobId)
-      end
-      redis.call('SADD', KEYS[3] .. 'processing', jobId)
-      
-      -- Set expiry on job key (TTL)
-      redis.call('EXPIRE', jobKey, ARGV[2])
-      
-      -- Return the job ID
-      return jobId
     `;
 
     // Define Lua script for moveScheduledJobs
@@ -527,6 +478,7 @@ export class RedisJobStorage implements RedisStorage {
 
   /**
    * Acquire the next job from the queue, respecting priorities and scheduled times
+   * Also checks for stale jobs that have been processing for too long
    * @returns The next job or null if no job is available
    */
   async acquireNextJob(ttl: number = 30): Promise<Job | null> {
@@ -534,23 +486,61 @@ export class RedisJobStorage implements RedisStorage {
       // First move scheduled jobs
       await this.moveScheduledJobs();
 
-      // Run the Lua script to acquire a job
-      const jobId = await this.redis.eval(
-        this.acquireJobScript,
-        3, // Number of keys
-        this.keyPrefix + "priority:", // Priority queue key prefix
-        this.keyPrefix + "job:", // Job key prefix
-        this.keyPrefix + "status:", // Status set key prefix
-        new Date().toISOString(), // Current timestamp
-        String(ttl), // Job TTL
-      );
-
+      // First try to get a pending job
+      let jobId: string | null = null;
+      
+      // Try each priority queue in order
+      for (let priority = 1; priority <= 10; priority++) {
+        const queueKey = this.priorityQueueKeys[priority];
+        jobId = await this.redis.rpop(queueKey);
+        if (jobId) break;
+      }
+      
+      // If no pending job found, check for stale jobs
+      if (!jobId) {
+        const processingJobs = await this.getJobsByStatus('processing');
+        const now = Date.now();
+        const staleTime = now - this.staleJobTimeout;
+        
+        // Find the first stale job
+        const staleJob = processingJobs.find(job => 
+          job.startedAt && job.startedAt.getTime() < staleTime
+        );
+        
+        if (staleJob) {
+          jobId = staleJob.id;
+        }
+      }
+      
       if (!jobId) {
         return null;
       }
 
+      // Update the job status to processing
+      const jobKey = this.getJobKey(jobId);
+      const statusKey = this.getStatusKey('processing');
+      const now = new Date();
+      
+      // Use a transaction to update the job atomically
+      const multi = this.redis.multi();
+      
+      // Get current status first
+      const currentStatus = await this.redis.hget(jobKey, 'status');
+      
+      // Update job status and startedAt
+      multi.hset(jobKey, 'status', 'processing', 'startedAt', now.toISOString());
+      
+      // Update status sets
+      if (currentStatus) {
+        multi.srem(this.getStatusKey(currentStatus as JobStatus), jobId);
+      }
+      multi.sadd(statusKey, jobId);
+      
+      // Execute the transaction
+      await multi.exec();
+      
       // Get the full job data
-      const job = await this.getJob(jobId as string);
+      const job = await this.getJob(jobId);
 
       // Ensure we got a valid job with an ID
       if (!job) {
@@ -616,6 +606,7 @@ export class RedisJobStorage implements RedisStorage {
     if (job.retryCount !== undefined)
       serialized.retryCount = String(job.retryCount);
     if (job.repeat) serialized.repeat = JSON.stringify(job.repeat);
+    if (job.timeout) serialized.timeout = String(job.timeout);
 
     return serialized;
   }
@@ -656,6 +647,7 @@ export class RedisJobStorage implements RedisStorage {
 
     if (data.error) job.error = data.error;
     if (data.retryCount) job.retryCount = parseInt(data.retryCount, 10);
+    if (data.timeout) job.timeout = parseInt(data.timeout, 10);
 
     return job;
   }

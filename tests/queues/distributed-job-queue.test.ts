@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { DistributedJobQueue } from "../../src/queue/distributed-job-queue";
 import { RedisJobStorage } from "../../src/storage/redis-storage";
-import { JobHandler } from "../../src/types";
+import { Job, JobHandler } from "../../src/types";
 import Redis from "ioredis";
 import { QueueEvent } from "../../src/utils/queue-event";
 import dotenv from "dotenv";
@@ -18,7 +18,7 @@ describe("DistributedJobQueue", () => {
   let mockHandler: JobHandler;
   dotenv.config();
   redis = new Redis(process.env.TEST_REDIS_URL || "redis://localhost:6379");
-  storage = new RedisJobStorage(redis, { keyPrefix: "test:" });
+  storage = new RedisJobStorage(redis, { keyPrefix: "test:",staleJobTimeout:1000 });
 
   beforeEach(async () => {
     await storage.clear();
@@ -173,4 +173,85 @@ describe("DistributedJobQueue", () => {
     queue.stop();
     expect(eventListener).toHaveBeenCalledTimes(2);
   });
+
+  it("it should handle timeout",async()=>{
+    const queue = new DistributedJobQueue(storage,{
+      concurrency:1,
+      processingInterval:100
+    })
+    const timeoutHandler = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      return { success: true };
+    });
+    const failedEventListener = vi.fn().mockImplementation((event: QueueEvent) => {
+      expect(event.data.status).toBe("failed");
+    });
+    queue.addEventListener("failed",failedEventListener)
+    queue.register("test-job",timeoutHandler);
+    queue.add("test-job",{message:"test"},{timeout:500})
+    queue.start();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    queue.stop();
+    expect(failedEventListener).toHaveBeenCalledTimes(1);
+    expect(timeoutHandler).toHaveBeenCalled();
+  });
+
+  it("it should process stale jobs",async()=>{
+    let staled = false;
+    const queue = new DistributedJobQueue(storage,{
+      concurrency:1,
+      processingInterval:100
+    })
+    const staleHandler = vi.fn().mockImplementation(async ({message}:{message:string}) => {
+      console.log("staleHandler",message);
+      return { success: true,message };
+    });
+    const completedEventListener = vi.fn().mockImplementation(async (event: QueueEvent) => {
+      expect(event.data.status).toBe("completed");
+      const jobId = event.data?.job?.id;
+      if(!jobId){
+        throw new Error("Job ID is required");
+      }
+      // stale the job manually
+      const job = await storage.getJob(jobId);
+      if(!job){
+        throw new Error("Job not found");
+      }
+      if(staled){
+        return;
+      }
+      try {
+        const pastDate = new Date(Date.now() - 3000);
+        
+        await storage.updateJob({
+          id: jobId,
+          status: "processing",
+          startedAt: pastDate,
+          completedAt: undefined,
+          error: undefined,
+          result: undefined,
+          retryCount: 0,
+          repeat: false,
+          timeout: 1000,
+          priority: 1,
+          name: "stale-job",
+          data: {message: "test"},
+          createdAt: pastDate,
+        } as unknown as Job);
+        
+        console.log("Successfully created stale job");
+        staled = true;
+      } catch (error) {
+        console.error("Error staling job", error);
+      }
+    })
+    queue.addEventListener("completed",completedEventListener)
+    queue.register("stale-job",staleHandler);
+    await queue.add("stale-job",{message:"test"})
+    queue.start();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    queue.stop();
+    expect(completedEventListener).toHaveBeenCalledTimes(2);
+    expect(staleHandler).toHaveBeenCalledTimes(2);
+  })
 });

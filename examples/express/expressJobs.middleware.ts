@@ -9,12 +9,4 @@ export const expressJobs = (app: Express, queues: JobQueue[]) => {
     req.queues = queues;
     next();
   });
-
-  ["SIGINT", "SIGTERM"].forEach((signal) => {
-    process.on(signal, () => {
-      for (const queue of queues) {
-        queue.stop();
-      }
-    });
-  });
 };

@@ -1,16 +1,17 @@
 {
   "name": "@backgroundjs/core",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "An extendible background job queue for js/ts applications",
-  "type": "commonjs",
+  "type": "module",
   "main": "./dist/node/index.js",
   "module": "./dist/bun/index.js",
   "types": "./dist/node/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/node/index.d.ts",
-      "import": "./dist/bun/index.js",
-      "require": "./dist/node/index.js"
+      "import": "./dist/node/index.js",
+      "require": "./dist/node/index.js",
+      "default": "./dist/node/index.js"
     }
   },
   "scripts": {
@@ -28,9 +29,7 @@
     "hono:redis": "nodemon --exec tsx examples/hono/server-redis.ts",
     "hono:mongo": "nodemon --exec tsx examples/hono/server-mongo.ts",
     "hono:postgres": "nodemon --exec tsx examples/hono/server-postgres.ts",
-    "express:inmemory": "nodemon --exec tsx examples/express/server.ts",
-    "express:mongo": "nodemon --exec tsx examples/express/server-mongo.ts",
-    "express:postgres": "nodemon --exec tsx examples/express/server-postgres.ts"
+    "express:inmemory": "nodemon --exec tsx examples/express/server.ts"
   },
   "keywords": [
     "background-jobs",

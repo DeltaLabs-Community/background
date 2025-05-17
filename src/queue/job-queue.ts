@@ -37,8 +37,12 @@ export class JobQueue extends EventTarget {
   private maxEmptyPolls: number = 5; // Number of empty polls before increasing interval
   private loadFactor: number = 0.5; // Target load factor (0.0 to 1.0)
   private maxConcurrency: number = 10; // Maximum number of jobs that can be processed concurrently
+
+  // Stopping properties
   protected isStopping: boolean = false;
   private isUpdatingInterval = false;
+  private isStopped: boolean = false;
+
 
   constructor(
     storage: JobStorage,
@@ -87,8 +91,11 @@ export class JobQueue extends EventTarget {
   async add<T>(
     name: string,
     data: T,
-    options?: { priority?: number },
+    options?: { priority?: number , timeout?: number},
   ): Promise<Job<T>> {
+    if (this.isStopped) {
+      throw new Error("Queue is stopped");
+    }
     if (this.standAlone && !this.handlers.has(name)) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
@@ -100,6 +107,7 @@ export class JobQueue extends EventTarget {
       status: "pending",
       createdAt: new Date(),
       priority,
+      timeout: options?.timeout || 10000,
     };
 
     if (this.logging) {
@@ -114,7 +122,10 @@ export class JobQueue extends EventTarget {
   }
 
   // Schedule a job to run at a specific time
-  async schedule<T>(name: string, data: T, scheduledAt: Date): Promise<Job<T>> {
+  async schedule<T>(name: string, data: T, scheduledAt: Date, options?: { timeout?: number }): Promise<Job<T>> {
+    if (this.isStopped) {
+      throw new Error("Queue is stopped");
+    }
     if (this.standAlone && !this.handlers.has(name)) {
       throw new Error(`Job handler for "${name}" not registered`);
     }
@@ -130,6 +141,7 @@ export class JobQueue extends EventTarget {
       status: "pending",
       createdAt: new Date(),
       scheduledAt,
+      timeout: options?.timeout || 10000,
     };
 
     if (this.logging) {
@@ -179,11 +191,30 @@ export class JobQueue extends EventTarget {
   }
 
   async rollbackActiveJobs(): Promise<void> {
-    for (const jobId of this.activeJobs) {
-      const job = await this.storage.getJob(jobId);
-      if (job) {
-        job.status = "pending";
-        await this.storage.updateJob(job);
+    if (this.logging) {
+      console.log(`[${this.name}] Rolling back ${this.activeJobs.size} active jobs`);
+    }
+    
+    const activeJobIds = [...this.activeJobs];
+    
+    for (const jobId of activeJobIds) {
+      try {
+        const job = await this.storage.getJob(jobId);
+        if (job) {
+          job.status = "pending";
+          await this.storage.updateJob(job);
+          if (this.logging) {
+            console.log(`[${this.name}] Rolled back job ${jobId}`);
+          }
+        } else {
+          if (this.logging) {
+            console.log(`[${this.name}] Could not find job ${jobId} to roll back`);
+          }
+        }
+      } catch (error) {
+        if (this.logging) {
+          console.error(`[${this.name}] Error rolling back job ${jobId}:`, error);
+        }
       }
     }
   }
@@ -191,26 +222,23 @@ export class JobQueue extends EventTarget {
   // Stop processing jobs
   async stop(): Promise<void> {
     if (!this.processing) return;
-
-    if (this.activeJobs.size > 0) {
-      if (this.logging) {
-        console.log(
-          `[${this.name}] Stopping job queue with ${this.activeJobs.size} active jobs`,
-        );
-      }
-      await this.rollbackActiveJobs();
-      this.isStopping = true;
-    }
-
+    this.isStopping = true;
     if (this.logging) {
       console.log(`[${this.name}] Stopping job queue`);
     }
-
-    this.processing = false;
+    
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = undefined;
     }
+
+    if (this.logging) {
+      console.log(`[${this.name}] Job queue stopped`);
+    }
+
+    this.processing = false;
+    this.isStopping = false;
+    this.isStopped = true;
   }
 
   // Set processing interval
@@ -236,6 +264,12 @@ export class JobQueue extends EventTarget {
   // Process the next batch of pending jobs
   protected async processNextBatch(): Promise<void> {
     try {
+      if (this.isStopped) {
+        if (this.logging) {
+          console.log(`[${this.name}] Queue is stopped, skipping`);
+        }
+        return;
+      }
       if (this.logging && this.isStopping) {
         console.log(`[${this.name}] Stopping job queue ... skipping`);
       }
@@ -285,6 +319,12 @@ export class JobQueue extends EventTarget {
 
   // Update polling interval based on processing results
   protected updatePollingInterval(hadJobs: boolean): void {
+    if (this.isStopped) {
+      if (this.logging) {
+        console.log(`[${this.name}] Queue is stopped, skipping`);
+      }
+      return;
+    }
     if (this.isUpdatingInterval) return;
 
     try {
@@ -383,9 +423,10 @@ export class JobQueue extends EventTarget {
   protected async processJob(job: Job): Promise<void> {
     try {
       if (this.isStopping) {
-        console.log(`[${this.name}] Stopping job queue ... skipping`);
+        console.log(`[${this.name}] Queue is stopping, skipping job ${job.id}`);
         return;
       }
+      
       if (job.status !== "processing") {
         // Mark job as processing
         job.status = "processing";
@@ -399,10 +440,26 @@ export class JobQueue extends EventTarget {
         throw new Error(`Handler for job "${job.name}" not found`);
       }
 
-      // Execute the handler
-      const result = await handler(job.data);
 
-      // Mark job as completed
+      const result = await Promise.race([
+        handler(job.data),
+        new Promise((_, reject) => {
+          const timeoutMs = job.timeout || 10000;
+          const timeoutId = setTimeout(() => {
+            reject(new Error(`Job timeout exceeded (${timeoutMs}ms)`));
+          }, timeoutMs);
+          // Ensure timeoutId is used to prevent optimization
+          if (this.logging) {
+            console.log(`[${this.name}] Set timeout ${timeoutId} for job ${job.id} (${timeoutMs}ms)`);
+          }
+        })
+      ]);
+
+      if (this.isStopping) {
+        console.log(`[${this.name}] Queue is stopping, skipping job ${job.id}`);
+        return;
+      }
+
       await this.storage.completeJob(job.id, result);
       this.dispatchEvent(
         new QueueEvent("completed", { job, status: "completed" }),
@@ -411,15 +468,16 @@ export class JobQueue extends EventTarget {
       if (this.logging) {
         console.log(`[${this.name}] Completed job ${job.id}`);
       }
-      // Handle repeatable jobs
-      if (job.repeat) {
+        
+      if (job.repeat && !this.isStopping) {
         await this.scheduleNextRepeat(job);
       }
+
     } catch (error) {
-      this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
       if (this.logging) {
-        console.log(`[${this.name}] Failed job ${job.id}`);
+        console.error(`[${this.name}] Error processing job`);
       }
+      this.dispatchEvent(new QueueEvent("failed", { job, status: "failed" }));
       throw error;
     }
   }
@@ -458,6 +516,7 @@ export class JobQueue extends EventTarget {
         priority: job.priority,
         retryCount: (job.retryCount || 0) + 1,
         repeat: job.repeat,
+        timeout: job.timeout,
       };
       if (this.logging) {
         console.log(
@@ -546,8 +605,12 @@ export class JobQueue extends EventTarget {
       endDate?: Date;
       limit?: number;
       priority?: number;
+      timeout?: number;
     },
   ): Promise<Job<T>> {
+    if (this.isStopped) {
+      throw new Error("Queue is stopped");
+    }
     if (!this.handlers.has(name) && !this.standAlone) {
       if (this.logging) {
         console.log(`[${this.name}] Job handler for "${name}" not registered`);
@@ -578,6 +641,7 @@ export class JobQueue extends EventTarget {
         endDate: options.endDate || undefined,
         limit: options.limit || undefined,
       },
+      timeout: options.timeout || undefined,
     };
 
     if (this.logging) {

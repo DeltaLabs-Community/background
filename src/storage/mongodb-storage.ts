@@ -16,16 +16,18 @@ export class MongoDBJobStorage implements JobStorage {
   private readonly collection: Collection<Job>;
   private readonly mongoClient: MongoClient;
   private readonly logging: boolean = false;
+  private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 
   constructor(
     mongoClient: MongoClient,
-    options: { collectionName?: string; logging?: boolean } = {},
+    options: { collectionName?: string; logging?: boolean; staleJobTimeout?: number } = {},
   ) {
     this.mongoClient = mongoClient;
     this.collection = this.mongoClient
       .db()
       .collection(options.collectionName || "jobs");
     this.logging = options.logging || false;
+    this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
   }
   /**
    * Save a job
@@ -94,7 +96,9 @@ export class MongoDBJobStorage implements JobStorage {
    */
   async acquireNextJob(): Promise<Job | null> {
     try {
-      const job = await this.collection.findOneAndUpdate(
+      const staleThreshold = new Date(Date.now() - this.staleJobTimeout);
+      // First try to find pending jobs
+      let job = await this.collection.findOneAndUpdate(
         {
           status: "pending",
           $or: [
@@ -103,9 +107,24 @@ export class MongoDBJobStorage implements JobStorage {
           ],
         },
         { $set: { status: "processing", startedAt: new Date() } },
-        { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" },
+        { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" }
       );
-      return job || null;
+      
+      if (!job) {
+        job = await this.collection.findOneAndUpdate(
+          {
+            status: "processing",
+            startedAt: { $lte: staleThreshold } as any,
+            $or: [
+              { completedAt: { $exists: false } } as any,
+              { completedAt: null } as any
+            ]
+          },
+          { $set: { startedAt: new Date() } },
+          { sort: { priority: 1, createdAt: 1 }, returnDocument: "after" }
+        );
+      }
+      return job;
     } catch (error) {
       if (this.logging) {
         console.error(`[MongoDBJobStorage] Error acquiring next job:`, error);

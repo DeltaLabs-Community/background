@@ -15,6 +15,7 @@ export interface Job<T = any> {
   priority?: number;
   result?: any;
   retryCount?: number;
+  timeout?: number;
   repeat?: {
     every?: number;
     unit?: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
