@@ -19,6 +19,7 @@ export class MongoDBJobQueue extends JobQueue {
       maxEmptyPolls?: number;
       loadFactor?: number;
       standAlone?: boolean;
+      preFetchBatchSize?: number;
     } = {},
   ) {
     super(storage, options);
@@ -26,6 +27,7 @@ export class MongoDBJobQueue extends JobQueue {
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
     this.standAlone = options.standAlone ?? true;
+    this.preFetchBatchSize = options.preFetchBatchSize;
   }
   /**
    * Process jobs with distributed locking
@@ -40,42 +42,71 @@ export class MongoDBJobQueue extends JobQueue {
       if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
       }
+      if(this.preFetchBatchSize){
+        await this.refillJobBuffer();
+      }
       const availableSlots = this.concurrency - this.activeJobs.size;
       let jobsProcessed = 0;
-      for (let i = 0; i < availableSlots; i++) {
-        const job = await this.mongodbStorage.acquireNextJob();
-        if (!job) {
-          break;
-        }
+      if(this.preFetchBatchSize){
+      }
+      else{
+        for (let i = 0; i < availableSlots; i++) {
+          const job = await this.mongodbStorage.acquireNextJob();
+          if (!job) {
+            break;
+          }
 
-        if (this.logging) {
-          console.log(`[${this.name}] Processing job:`, job);
-          console.log(
-            `[${this.name}] Available handlers:`,
-            Array.from(this.handlers.keys()),
-          );
-          console.log(
-            `[${this.name}] Has handler for ${job.name}:`,
-            this.handlers.has(job.name),
-          );
-        }
+          if (this.logging) {
+            console.log(`[${this.name}] Processing job:`, job);
+            console.log(
+              `[${this.name}] Available handlers:`,
+              Array.from(this.handlers.keys()),
+            );
+            console.log(
+              `[${this.name}] Has handler for ${job.name}:`,
+              this.handlers.has(job.name),
+            );
+          }
 
-        this.activeJobs.add(job.id);
-        this.processJob(job)
-          .catch((error) => {
-            if (this.logging) {
-              console.error("Error processing job", error);
-            }
-          })
-          .finally(async () => {
-            this.activeJobs.delete(job.id);
-          });
-        jobsProcessed++;
+          this.activeJobs.add(job.id);
+          this.processJob(job)
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error processing job", error);
+              }
+            })
+            .finally(async () => {
+              this.activeJobs.delete(job.id);
+            });
+          jobsProcessed++;
+        }
       }
       this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
       if (this.logging) {
         console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
+    }
+  }
+
+    /**
+   * Refill the job buffer when it's running low
+   */
+  protected async refillJobBuffer(): Promise<void> {
+    const bufferThreshold = Math.max(1, Math.floor(this.preFetchBatchSize ?? 1 / 3));
+    
+    if (this.jobBuffer.length <= bufferThreshold) {
+      const neededJobs = this.preFetchBatchSize ?? 1 - this.jobBuffer.length;
+      
+      if (this.logging) {
+        console.log(`[${this.name}] Refilling job buffer, need ${neededJobs} jobs`);
+      }
+
+      const newJobs = await this.mongodbStorage.acquireNextJobs(neededJobs);
+      this.jobBuffer.push(...newJobs);
+
+      if (this.logging && newJobs.length > 0) {
+        console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }
     }
   }
@@ -113,5 +144,22 @@ export class MongoDBJobQueue extends JobQueue {
         await this.mongodbStorage.updateJob(job);
       }
     }
+  }
+    /**
+   * Override stop to handle buffered jobs
+   */
+  async stop(): Promise<void> {
+    if (this.logging) {
+      console.log(`[${this.name}] Stopping queue, ${this.jobBuffer.length} jobs in buffer`);
+    }
+    
+    for (const job of this.jobBuffer) {
+      job.status = "pending" as JobStatus;
+      job.startedAt = undefined;
+      await this.mongodbStorage.updateJob(job);
+    }
+    this.jobBuffer.length = 0;
+
+    await super.stop();
   }
 }

@@ -329,6 +329,32 @@ export class RedisJobStorage implements RedisStorage {
     `;
   }
 
+  async acquireNextJobs(batchSize: number): Promise<Job[]> {
+    try {
+      const jobs: Job[] = [];
+      
+      for (let i = 0; i < batchSize; i++) {
+        const job = await this.acquireNextJob();
+        if (!job) {
+          break;
+        }
+        jobs.push(job);
+      }
+
+      if (this.logging && jobs.length > 0) {
+        console.log(`[RedisJobStorage] Acquired ${jobs.length} jobs in batch`);
+      }
+
+      return jobs;
+      
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error acquiring batch jobs (simple):`, error);
+      }
+      return [];
+    }
+  }
+
   /**
    * Save a job to Redis using a Lua script
    */

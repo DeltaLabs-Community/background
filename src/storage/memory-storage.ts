@@ -98,6 +98,10 @@ export class InMemoryJobStorage implements JobStorage {
     }
   }
 
+  acquireNextJobs(batchSize: number): Promise<Job[]> {
+    throw new Error("Method not implemented.");
+  }
+
   async completeJob(jobId: string, result: any): Promise<void> {
     try {
       const job = await this.getJob(jobId);
