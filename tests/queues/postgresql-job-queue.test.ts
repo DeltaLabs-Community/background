@@ -270,7 +270,6 @@ describe("PostgreSQLJobQueue", () => {
       }
       try {
         const pastDate = new Date(Date.now() - 3000);
-        
         await storage.updateJob({
           id:jobId,
           status:"processing",
@@ -299,11 +298,7 @@ describe("PostgreSQLJobQueue", () => {
     await queue.add("stale-job",{message:"test"})
     
     queue.start();
-    // Give enough time for:
-    // 1. The original job to complete
-    // 2. The job to be marked as stale
-    // 3. The queue to detect and reprocess the stale job
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     queue.stop();
     expect(completedEventListener).toHaveBeenCalledTimes(2);
     expect(staleHandler).toHaveBeenCalledTimes(2);

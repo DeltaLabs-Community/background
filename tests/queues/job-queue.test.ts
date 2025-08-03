@@ -193,6 +193,9 @@ describe("JobQueue", () => {
     expect(slowHandler).toHaveBeenCalledTimes(2);
     expect(slowHandler).toHaveBeenCalledWith({ id: 1 });
     expect(slowHandler).toHaveBeenCalledWith({ id: 2 });
+
+    // Wait for the event listener to be called
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(completedEventListener).toHaveBeenCalledTimes(2);
   });
 
