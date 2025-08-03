@@ -38,7 +38,6 @@ export class RedisJobStorage implements RedisStorage {
   private readonly moveScheduledJobsScript: string;
   private readonly completeJobScript: string;
   private readonly failJobScript: string;
-  private readonly batchAcquireScript: string;
 
   private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 

@@ -1,5 +1,9 @@
-.huksy
-examples
-tests
-node_modules
+.husky/
+.vscode/
+.DS_Store
+examples/
+tests/
+node_modules/
+package-lock.json
+package.json
 .env
