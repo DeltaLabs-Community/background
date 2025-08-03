@@ -14,7 +14,7 @@ export class JobQueue extends EventTarget {
    */
   protected activeJobs: Set<string> = new Set();
   protected readonly jobBuffer: Job[] = []; // Prefetch buffer
-  protected readonly preFetchBatchSize: number | undefined;
+  protected preFetchBatchSize: number | undefined;
   /**
    * Number of jobs that can be processed concurrently
    */
@@ -61,6 +61,7 @@ export class JobQueue extends EventTarget {
       loadFactor?: number;
       maxConcurrency?: number;
       standAlone?: boolean;
+      preFetchBatchSize?: number;
     } = {},
   ) {
     super();
@@ -73,6 +74,7 @@ export class JobQueue extends EventTarget {
     this.lastPollingInterval = this.processingInterval;
     this.pollingErrorCount = 0;
     this.standAlone = options.standAlone ?? true;
+    this.preFetchBatchSize = options.preFetchBatchSize;
     // Intelligent polling configuration
     this.intelligentPolling = options.intelligentPolling || false;
     if (this.intelligentPolling) {

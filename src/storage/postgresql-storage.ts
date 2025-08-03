@@ -274,63 +274,77 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
     }
   }
 
-  /**
- * Acquire multiple pending jobs for prefetching
- * @param batchSize - Number of jobs to prefetch
- * @returns Array of acquired jobs
- */
-  async acquireNextJobs(batchSize: number): Promise<Job[]> {
-    if (!this.initialized) {
-      await this.initialize();
+async acquireNextJobs(batchSize: number): Promise<Job[]> {
+  if (!this.initialized) {
+    await this.initialize();
+  }
+  
+  const client = await this.pool.connect();
+  let committed = false;
+  
+  try {
+    await client.query("BEGIN");
+
+    // Acquire multiple jobs atomically
+    const query = await client.query(
+      `UPDATE ${this.tableName} 
+      SET status = 'processing', started_at = $1
+      WHERE id IN (
+        SELECT id FROM ${this.tableName} 
+        WHERE (
+          status = 'pending' 
+          AND (scheduled_at IS NULL OR scheduled_at <= $1)
+        )
+        OR (
+          status = 'processing' 
+          AND started_at IS NOT NULL 
+          AND completed_at IS NULL 
+          AND started_at < $2
+        )
+        ORDER BY priority ASC, created_at ASC 
+        LIMIT $3
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING *`,
+      [new Date(), new Date(Date.now() - this.staleJobTimeout), batchSize]
+    );
+
+    await client.query("COMMIT");
+    committed = true;
+    
+    return query.rows.map(row => {
+      const job = this.mapRowToJob(row);
+      job.status = "processing";
+      job.startedAt = new Date();
+      return job;
+    });
+    
+  } catch (error) {
+    if (this.logging) {
+      console.error(`[PostgreSQLJobStorage] Error acquiring batch jobs:`, error);
     }
     
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-
-      // Acquire multiple jobs atomically
-      const query = await client.query(
-        `UPDATE ${this.tableName} 
-        SET status = 'processing', started_at = $1
-        WHERE id IN (
-          SELECT id FROM ${this.tableName} 
-          WHERE (
-            status = 'pending' 
-            AND (scheduled_at IS NULL OR scheduled_at <= $1)
-          )
-          OR (
-            status = 'processing' 
-            AND started_at IS NOT NULL 
-            AND completed_at IS NULL 
-            AND started_at < $2
-          )
-          ORDER BY priority ASC, created_at ASC 
-          LIMIT $3
-          FOR UPDATE SKIP LOCKED
-        )
-        RETURNING *`,
-        [new Date(), new Date(Date.now() - this.staleJobTimeout), batchSize]
-      );
-
-      await client.query("COMMIT");
-      
-      return query.rows.map(row => {
-        const job = this.mapRowToJob(row);
-        job.status = "processing";
-        job.startedAt = new Date();
-        return job;
-      });
-      
-    } catch (error) {
-      if (this.logging) {
-        console.error(`[PostgreSQLJobStorage] Error acquiring batch jobs:`, error);
+    if (!committed) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        if (this.logging) {
+          console.error(`[PostgreSQLJobStorage] Error during rollback:`, rollbackError);
+        }
       }
-      await client.query("ROLLBACK");
-      return [];
-    } finally {
+    }
+    
+    return [];
+  } finally {
+    try {
       client.release();
+    } catch (releaseError) {
+      if (this.logging) {
+        console.error(`[PostgreSQLJobStorage] Error releasing client:`, releaseError);
+      }
     }
   }
+}
 
   /**
    * Complete a job

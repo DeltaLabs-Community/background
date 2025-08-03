@@ -27,6 +27,7 @@ export class MongoDBJobQueue extends JobQueue {
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
     this.standAlone = options.standAlone ?? true;
+    this.preFetchBatchSize = options.preFetchBatchSize;
   }
   /**
    * Process jobs with distributed locking

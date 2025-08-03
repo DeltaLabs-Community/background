@@ -38,6 +38,7 @@ export class RedisJobStorage implements RedisStorage {
   private readonly moveScheduledJobsScript: string;
   private readonly completeJobScript: string;
   private readonly failJobScript: string;
+  private readonly batchAcquireScript: string;
 
   private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 
@@ -328,8 +329,31 @@ export class RedisJobStorage implements RedisStorage {
       return 1
     `;
   }
-  acquireNextJobs(batchSize: number): Promise<Job[]> {
-    throw new Error("Method not implemented.");
+
+  async acquireNextJobs(batchSize: number): Promise<Job[]> {
+    try {
+      const jobs: Job[] = [];
+      
+      for (let i = 0; i < batchSize; i++) {
+        const job = await this.acquireNextJob();
+        if (!job) {
+          break;
+        }
+        jobs.push(job);
+      }
+
+      if (this.logging && jobs.length > 0) {
+        console.log(`[RedisJobStorage] Acquired ${jobs.length} jobs in batch`);
+      }
+
+      return jobs;
+      
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error acquiring batch jobs (simple):`, error);
+      }
+      return [];
+    }
   }
 
   /**

@@ -33,6 +33,7 @@ export class PostgreSQLJobQueue extends JobQueue {
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
     this.standAlone = options.standAlone ?? true;
+    this.preFetchBatchSize = options.preFetchBatchSize;
   }
 
   /**
