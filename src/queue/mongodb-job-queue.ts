@@ -5,8 +5,6 @@ import { Job, JobStatus } from "../types";
 
 export class MongoDBJobQueue extends JobQueue {
   private readonly mongodbStorage: MongoDBJobStorage;
-  private readonly jobBuffer: Job[] = [];
-  private readonly preFetchBatchSize: number | undefined;
   constructor(
     storage: JobStorage,
     options: {
@@ -29,7 +27,6 @@ export class MongoDBJobQueue extends JobQueue {
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
     this.standAlone = options.standAlone ?? true;
-    this.preFetchBatchSize = options.preFetchBatchSize;
   }
   /**
    * Process jobs with distributed locking
@@ -94,7 +91,7 @@ export class MongoDBJobQueue extends JobQueue {
     /**
    * Refill the job buffer when it's running low
    */
-  private async refillJobBuffer(): Promise<void> {
+  protected async refillJobBuffer(): Promise<void> {
     const bufferThreshold = Math.max(1, Math.floor(this.preFetchBatchSize ?? 1 / 3));
     
     if (this.jobBuffer.length <= bufferThreshold) {

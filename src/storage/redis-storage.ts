@@ -328,6 +328,9 @@ export class RedisJobStorage implements RedisStorage {
       return 1
     `;
   }
+  acquireNextJobs(batchSize: number): Promise<Job[]> {
+    throw new Error("Method not implemented.");
+  }
 
   /**
    * Save a job to Redis using a Lua script

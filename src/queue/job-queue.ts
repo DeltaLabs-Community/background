@@ -1,4 +1,4 @@
-import { Job } from "../types";
+import { Job, JobStatus } from "../types";
 import { JobStorage } from "../storage/base-storage";
 import { JobHandler } from "../types";
 import { generateId } from "../utils/id-generator";
@@ -13,6 +13,8 @@ export class JobQueue extends EventTarget {
    * Set of job IDs that are currently being processed
    */
   protected activeJobs: Set<string> = new Set();
+  protected readonly jobBuffer: Job[] = []; // Prefetch buffer
+  protected readonly preFetchBatchSize: number | undefined;
   /**
    * Number of jobs that can be processed concurrently
    */
@@ -236,6 +238,13 @@ export class JobQueue extends EventTarget {
       console.log(`[${this.name}] Job queue stopped`);
     }
 
+    for (const job of this.jobBuffer) {
+      job.status = "pending" as JobStatus;
+      job.startedAt = undefined;
+      await this.storage.updateJob(job);
+    }
+    this.jobBuffer.length = 0;
+
     this.processing = false;
     this.isStopping = false;
     this.isStopped = true;
@@ -262,57 +271,108 @@ export class JobQueue extends EventTarget {
   }
 
   // Process the next batch of pending jobs
+  /**
+   * Process jobs with prefetching
+   * Override the parent's protected method
+   */
   protected async processNextBatch(): Promise<void> {
     try {
-      if (this.isStopped) {
-        if (this.logging) {
-          console.log(`[${this.name}] Queue is stopped, skipping`);
-        }
+      if (this.isStopping && this.logging) {
+        console.log(`[${this.name}] Stopping job queue ... skipping`);
         return;
       }
-      if (this.logging && this.isStopping) {
-        console.log(`[${this.name}] Stopping job queue ... skipping`);
-      }
-      // Skip if we're already processing the maximum number of jobs
+
       if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
+      }
+
+      if (this.preFetchBatchSize) {
+        await this.refillJobBuffer();
       }
 
       const availableSlots = this.concurrency - this.activeJobs.size;
       let jobsProcessed = 0;
 
-      for (let i = 0; i < availableSlots; i++) {
-        const job = await this.storage.acquireNextJob();
-        if (!job) {
-          break;
+      if (this.preFetchBatchSize) {
+        // Process jobs from buffer
+        for (let i = 0; i < availableSlots && this.jobBuffer.length > 0; i++) {
+          const job = this.jobBuffer.shift()!;
+          
+          if (this.logging) {
+            console.log(`[${this.name}] Processing prefetched job:`, job.id);
+          }
+
+          this.activeJobs.add(job.id);
+          this.processJob(job)
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error processing job", error);
+              }
+            })
+            .finally(() => {
+              this.activeJobs.delete(job.id);
+            });
+          jobsProcessed++;
         }
-        // Skip if job is already being processed
-        if (this.activeJobs.has(job.id)) {
-          continue;
+      } else {
+        for (let i = 0; i < availableSlots; i++) {
+          const job = await this.storage.acquireNextJob();
+          if (!job) {
+            break;
+          }
+
+          if (this.logging) {
+            console.log(`[${this.name}] Processing job:`, job);
+            console.log(
+              `[${this.name}] Available handlers:`,
+              Array.from(this.handlers.keys()),
+            );
+            console.log(
+              `[${this.name}] Has handler for ${job.name}:`,
+              this.handlers.has(job.name),
+            );
+          }
+
+          this.activeJobs.add(job.id);
+          this.processJob(job)
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error processing job", error);
+              }
+            })
+            .finally(() => {
+              this.activeJobs.delete(job.id);
+            });
+          jobsProcessed++;
         }
-        if (this.logging) {
-          console.log(`[${this.name}] Processing job:`, job);
-          console.log(
-            `[${this.name}] Available handlers:`,
-            Array.from(this.handlers.keys()),
-          );
-          console.log(
-            `[${this.name}] Has handler for ${job.name}:`,
-            this.handlers.has(job.name),
-          );
-        }
-        this.activeJobs.add(job.id);
-        this.processJob(job).finally(() => {
-          this.activeJobs.delete(job.id);
-        });
-        jobsProcessed++;
       }
 
-      // Update intelligent polling metrics
       this.updatePollingInterval(jobsProcessed > 0);
     } catch (error) {
       if (this.logging) {
         console.error(`[${this.name}] Error in processNextBatch:`, error);
+      }
+    }
+  }
+
+  /**
+   * Refill the job buffer when it's running low
+   */
+  protected async refillJobBuffer(): Promise<void> {
+    const bufferThreshold = Math.max(1, Math.floor((this.preFetchBatchSize ?? 1) / 3));
+    
+    if (this.jobBuffer.length <= bufferThreshold) {
+      const neededJobs = (this.preFetchBatchSize ?? 1) - this.jobBuffer.length;
+      
+      if (this.logging) {
+        console.log(`[${this.name}] Refilling job buffer, need ${neededJobs} jobs`);
+      }
+
+      const newJobs = await this.storage.acquireNextJobs(neededJobs);
+      this.jobBuffer.push(...newJobs);
+
+      if (this.logging && newJobs.length > 0) {
+        console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }
     }
   }

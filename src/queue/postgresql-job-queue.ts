@@ -5,8 +5,6 @@ import { Job, JobStatus } from "../types";
 
 export class PostgreSQLJobQueue extends JobQueue {
   private readonly postgresStorage: PostgreSQLJobStorage;
-  private readonly jobBuffer: Job[] = []; // Prefetch buffer
-  private readonly preFetchBatchSize: number | undefined;
   /**
    * Create a PostgreSQL job queue
    *
@@ -35,7 +33,6 @@ export class PostgreSQLJobQueue extends JobQueue {
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
     this.standAlone = options.standAlone ?? true;
-    this.preFetchBatchSize = options.preFetchBatchSize;
   }
 
   /**
@@ -105,7 +102,7 @@ export class PostgreSQLJobQueue extends JobQueue {
    /**
    * Refill the job buffer when it's running low
    */
-  private async refillJobBuffer(): Promise<void> {
+  protected async refillJobBuffer(): Promise<void> {
     const bufferThreshold = Math.max(1, Math.floor(this.preFetchBatchSize ?? 1 / 3));
     
     if (this.jobBuffer.length <= bufferThreshold) {
