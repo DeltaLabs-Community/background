@@ -1,4 +1,4 @@
-import { ClientSession, Collection, MongoClient } from "mongodb";
+import { Collection, MongoClient } from "mongodb";
 import { JobStorage } from "./base-storage";
 import { Job, JobStatus } from "../types";
 
@@ -132,6 +132,91 @@ export class MongoDBJobStorage implements JobStorage {
       return null;
     }
   }
+
+/**
+ * Acquire multiple pending jobs for prefetching
+ * @param batchSize - Number of jobs to prefetch
+ * @returns Array of acquired jobs
+ */
+  async acquireNextJobs(batchSize: number): Promise<Job[]> {
+    const session = this.mongoClient.startSession();
+    
+    try {
+      let jobs: Job[] = [];
+      
+      await session.withTransaction(async () => {
+        const now = new Date();
+        const staleThreshold = new Date(Date.now() - this.staleJobTimeout);
+        
+        const availableJobs = await this.collection
+          .find(
+            {
+              $or: [
+                {
+                  status: 'pending',
+                  $or: [
+                    { scheduledAt: { $exists: false } },
+                    { scheduledAt: { $lte: now } }
+                  ]
+                },
+                {
+                  status: 'processing',
+                  startedAt: { $exists: true,$ne: undefined,$lt: staleThreshold},
+                  completedAt: { $exists: false },
+                }
+              ]
+            },
+            { session }
+          )
+          .sort({ priority: 1, createdAt: 1 })
+          .limit(batchSize)
+          .toArray();
+
+        if (availableJobs.length === 0) {
+          return;
+        }
+        const bulkOps = availableJobs.map(job => ({
+          updateOne: {
+            filter: { _id: job._id },
+            update: {
+              $set: {
+                status: 'processing' as JobStatus, 
+                startedAt: now,
+              }
+            }
+          }
+        }));
+
+        const bulkResult = await this.collection.bulkWrite(bulkOps, { session });
+        
+        if (bulkResult.modifiedCount > 0) {
+          const updatedJobs = await this.collection
+            .find(
+              { 
+                _id: { $in: availableJobs.map(job => job._id) },
+                status: 'processing',
+                startedAt: now
+              },
+              { session }
+            )
+            .toArray();
+          jobs = updatedJobs
+        }
+      });
+      if (this.logging && jobs.length > 0) {
+        console.log(`[MongoDBJobStorage] Acquired ${jobs.length} jobs in batch`);
+      }
+      return jobs;
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[MongoDBJobStorage] Error acquiring batch jobs:`, error);
+      }
+      return [];
+    } finally {
+      await session.endSession();
+    }
+  }
+
   /**
    * Complete a job
    * @param jobId - The ID of the job to complete
