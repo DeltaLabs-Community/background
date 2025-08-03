@@ -1,18 +1,16 @@
 import readline from "readline";
-import Redis from "ioredis";
-import { DistributedJobQueue, RedisJobStorage } from "../../src";
+import {Pool} from "pg";
+import { MongoDBJobStorage, MongoDBJobQueue } from "../../src";
 import dotenv from "dotenv";
-
+import { MongoClient } from "mongodb";
 dotenv.config();
 
 let testConfig = {
     messagePerSecond: 40000,
-    redisHost: "localhost",
-    redisPort: 6379,
+    postgresPort: 5432,
     concurrency: 8,
     rateLimitingEnabled: true,
-    redisPassword: "",
-    testDurationSeconds: 30 // Added test duration
+    testDurationSeconds: 30
 };
 
 // Analytics tracking
@@ -118,18 +116,6 @@ async function collectUserInput() {
             testConfig.concurrency = concurrency;
         }
 
-        const hostAnswer = await askQuestion("Please specify the redis host (default is localhost): ");
-        testConfig.redisHost = hostAnswer || testConfig.redisHost;
-
-        const portAnswer = await askQuestion("Please specify the redis port (default is 6379): ");
-        const port = parseInt(portAnswer) || testConfig.redisPort;
-        if (port > 0) {
-            testConfig.redisPort = port;
-        }
-
-        const passwordAnswer = await askQuestion("Please specify the redis password (default is empty): ");
-        testConfig.redisPassword = passwordAnswer || testConfig.redisPassword;
-
         const rateLimitAnswer = await askQuestion("Do you want rate limiting to be enabled? (true/false, default is true): ");
         testConfig.rateLimitingEnabled = rateLimitAnswer === "false" ? false : true;
 
@@ -147,26 +133,21 @@ async function collectUserInput() {
 }
 
 async function runStressTest() {
-    const redis = new Redis({
-        host: testConfig.redisHost,
-        port: testConfig.redisPort,
-        password: testConfig.redisPassword || undefined,
-        lazyConnect: true
-    });
+    const client = new MongoClient(process.env.MONGODB_URL!);
 
-    console.log("Please wait while connecting to redis...");
+    console.log("Please wait while connecting to postgres...");
     
     try {
-        await redis.connect();
-        console.log("Redis connected successfully.");
+        await client.connect();
+        console.log("Postgres connected successfully.");
         console.log("Stress test starting...");
         console.log(`Configuration: ${JSON.stringify(testConfig, null, 2)}`);
 
-        const storage = new RedisJobStorage(redis);
-        const queue = new DistributedJobQueue(storage, {
+        const storage = new MongoDBJobStorage(client);
+        const queue = new MongoDBJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            standAlone: false,
+            standAlone: true,
             processingInterval:50,
             preFetchBatchSize:1000,
         });
@@ -258,7 +239,7 @@ async function runStressTest() {
             setTimeout(async () => {
                 clearInterval(waitInterval);
                 await queue.stop();
-                await redis.disconnect();
+                await client.close();
                 await reportAnalytics();
                 rl.close();
                 process.exit(0);
@@ -294,7 +275,7 @@ async function runStressTest() {
 
     } catch (error) {
         console.error("Redis connection failed:", error);
-        await redis.disconnect();
+        await client.close();
         rl.close();
         process.exit(1);
     }

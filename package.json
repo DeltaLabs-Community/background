@@ -26,6 +26,7 @@
     "test:mongodb": "vitest run tests/queues/mongodb-job-queue.test.ts",
     "stress-test:distributed": "tsx tests/stress-test/redis.queue.stress.test.ts",
     "stress-test:postgres": "tsx tests/stress-test/postgres.queue.stress.test.ts",
+    "stress-test:mongodb": "tsx tests/stress-test/mongodb.queue.stress.test.ts",
     "clean": "rimraf dist",
     "hono:inmemory": "nodemon --exec tsx examples/hono/server-inmemory.ts",
     "hono:redis": "nodemon --exec tsx examples/hono/server-redis.ts",
