@@ -61,6 +61,11 @@ export class PostgreSQLJobQueue extends JobQueue {
             console.log(`[${this.name}] Processing prefetched job:`, job.id);
           }
 
+          if(!this.handlers.has(job.name)){
+            this.activeJobs.delete(job.id);
+            continue;
+          }
+
           this.activeJobs.add(job.id);
           this.processJob(job).finally(() => {
             this.activeJobs.delete(job.id);
