@@ -147,7 +147,6 @@ async function runStressTest() {
         const queue = new MongoDBJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            standAlone: false,
             processingInterval:50,
             preFetchBatchSize:1000,
         });

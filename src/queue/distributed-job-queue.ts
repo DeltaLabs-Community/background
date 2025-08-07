@@ -30,7 +30,6 @@ export class DistributedJobQueue extends JobQueue {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
-      standAlone?: boolean;
       preFetchBatchSize?: number;
     } = {},
   ) {
@@ -39,7 +38,6 @@ export class DistributedJobQueue extends JobQueue {
     this.jobTTL = options.jobTTL || 30;
     this.logging = options.logging || false;
     this.queueName = options.name || "distributed-queue";
-    this.standAlone = options.standAlone ?? true;
     this.preFetchBatchSize = options.preFetchBatchSize;
   }
 

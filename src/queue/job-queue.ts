@@ -30,7 +30,6 @@ export class JobQueue extends EventTarget {
   protected logging: boolean = false;
   private lastPollingInterval: number = 0;
   private pollingErrorCount: number = 0;
-  protected standAlone: boolean = true;
   // Intelligent polling properties
   private intelligentPolling: boolean = false;
   private minInterval: number = 100; // Minimum polling interval (ms)
@@ -60,7 +59,6 @@ export class JobQueue extends EventTarget {
       maxEmptyPolls?: number;
       loadFactor?: number;
       maxConcurrency?: number;
-      standAlone?: boolean;
       preFetchBatchSize?: number;
     } = {},
   ) {
@@ -73,7 +71,6 @@ export class JobQueue extends EventTarget {
     this.logging = options.logging || false;
     this.lastPollingInterval = this.processingInterval;
     this.pollingErrorCount = 0;
-    this.standAlone = options.standAlone ?? true;
     this.preFetchBatchSize = options.preFetchBatchSize;
     // Intelligent polling configuration
     this.intelligentPolling = options.intelligentPolling || false;
@@ -99,9 +96,6 @@ export class JobQueue extends EventTarget {
   ): Promise<Job<T>> {
     if (this.isStopped) {
       throw new Error("Queue is stopped");
-    }
-    if (this.standAlone && !this.handlers.has(name)) {
-      throw new Error(`Job handler for "${name}" not registered`);
     }
     const priority = options?.priority || 1;
     const job: Job<T> = {
@@ -129,9 +123,6 @@ export class JobQueue extends EventTarget {
   async schedule<T>(name: string, data: T, scheduledAt: Date, options?: { timeout?: number }): Promise<Job<T>> {
     if (this.isStopped) {
       throw new Error("Queue is stopped");
-    }
-    if (this.standAlone && !this.handlers.has(name)) {
-      throw new Error(`Job handler for "${name}" not registered`);
     }
 
     if (scheduledAt < new Date()) {
@@ -175,13 +166,9 @@ export class JobQueue extends EventTarget {
     return this.name;
   }
 
-  isStandAlone(): boolean {
-    return this.standAlone;
-  }
-
   // Start processing jobs
   start(): void {
-    if (this.processing || this.isStopping || !this.standAlone) return;
+    if (this.processing || this.isStopping) return;
 
     if (this.logging) {
       console.log(`[${this.name}] Starting job queue`);
@@ -716,12 +703,6 @@ export class JobQueue extends EventTarget {
   ): Promise<Job<T>> {
     if (this.isStopped) {
       throw new Error("Queue is stopped");
-    }
-    if (!this.handlers.has(name) && !this.standAlone) {
-      if (this.logging) {
-        console.log(`[${this.name}] Job handler for "${name}" not registered`);
-      }
-      throw new Error(`Job handler for "${name}" not registered`);
     }
 
     // Validate options
