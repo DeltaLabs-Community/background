@@ -14,7 +14,7 @@ import type { Redis } from "ioredis";
 
 export interface RedisStorage extends JobStorage {
   // Atomic job acquisition
-  acquireNextJob(ttl?: number): Promise<Job | null>;
+  acquireNextJob(handlerNames?:string[],ttl?: number): Promise<Job | null>;
   // Get jobs by priority
   getJobsByPriority(priority: number): Promise<Job[]>;
   // Get scheduled jobs within a time range
@@ -507,22 +507,18 @@ export class RedisJobStorage implements RedisStorage {
    * Also checks for stale jobs that have been processing for too long
    * @returns The next job or null if no job is available
    */
-  async acquireNextJob(ttl: number = 30): Promise<Job | null> {
+  async acquireNextJob(handlerNames?: string[],ttl: number = 30): Promise<Job | null> {
     try {
-      // First move scheduled jobs
       await this.moveScheduledJobs();
 
-      // First try to get a pending job
       let jobId: string | null = null;
       
-      // Try each priority queue in order
       for (let priority = 1; priority <= 10; priority++) {
         const queueKey = this.priorityQueueKeys[priority];
         jobId = await this.redis.rpop(queueKey);
         if (jobId) break;
       }
       
-      // If no pending job found, check for stale jobs
       if (!jobId) {
         const processingJobs = await this.getJobsByStatus('processing');
         const now = Date.now();
@@ -542,33 +538,26 @@ export class RedisJobStorage implements RedisStorage {
         return null;
       }
 
-      // Update the job status to processing
       const jobKey = this.getJobKey(jobId);
       const statusKey = this.getStatusKey('processing');
       const now = new Date();
       
-      // Use a transaction to update the job atomically
       const multi = this.redis.multi();
       
       // Get current status first
       const currentStatus = await this.redis.hget(jobKey, 'status');
       
-      // Update job status and startedAt
       multi.hset(jobKey, 'status', 'processing', 'startedAt', now.toISOString());
       
-      // Update status sets
       if (currentStatus) {
         multi.srem(this.getStatusKey(currentStatus as JobStatus), jobId);
       }
       multi.sadd(statusKey, jobId);
       
-      // Execute the transaction
       await multi.exec();
       
-      // Get the full job data
       const job = await this.getJob(jobId);
 
-      // Ensure we got a valid job with an ID
       if (!job) {
         return null;
       }

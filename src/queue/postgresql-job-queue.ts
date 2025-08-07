@@ -51,6 +51,8 @@ export class PostgreSQLJobQueue extends JobQueue {
       if(this.preFetchBatchSize){
         await this.refillJobBuffer();
       }
+      const handlerNames = Array.from(this.handlers.keys());
+
       const availableSlots = this.concurrency - this.activeJobs.size;
       let jobsProcessed = 0;
       if(this.preFetchBatchSize){
@@ -75,7 +77,7 @@ export class PostgreSQLJobQueue extends JobQueue {
       }
       else{
         for (let i = 0; i < availableSlots; i++) {
-          const job = await this.postgresStorage.acquireNextJob();
+          const job = await this.postgresStorage.acquireNextJob(handlerNames);
           if (!job) {
             break;
           }

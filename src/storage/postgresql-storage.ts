@@ -2,20 +2,13 @@ import { Pool } from "pg";
 import { JobStorage } from "./base-storage";
 import { Job, JobStatus } from "../types";
 
-export interface PostgreSQLStorage extends JobStorage {
-  acquireNextJob(): Promise<Job | null>;
-  completeJob(jobId: string, result: any): Promise<void>;
-  acquireNextJobs(batchSize: number): Promise<Job[]>; // Add this
-  failJob(jobId: string, error: string): Promise<void>;
-}
-
 /**
  * PostgreSQL storage adapter for JobQueue
  *
  * This storage adapter uses PostgreSQL to store jobs, making it suitable
  * for distributed environments with multiple instances/processes.
  */
-export class PostgreSQLJobStorage implements PostgreSQLStorage {
+export class PostgreSQLJobStorage implements JobStorage {
   private readonly pool: Pool;
   private readonly tableName: string;
   private initialized: boolean = false;
@@ -216,7 +209,7 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
    * Acquire the next pending job
    * @returns The next pending job, or null if no pending jobs are available
    */
-  async acquireNextJob(): Promise<Job | null> {
+  async acquireNextJob(handlers:string []): Promise<Job | null> {
     if (!this.initialized) {
       await this.initialize();
     }
@@ -227,18 +220,21 @@ export class PostgreSQLJobStorage implements PostgreSQLStorage {
       // Use the server's current time for the scheduled_at check
       const query = await client.query(
         `SELECT * FROM ${this.tableName} 
-        WHERE (
-          status = 'pending' 
-          AND (scheduled_at IS NULL OR scheduled_at <= $1)
-        )
-        OR (
-          status = 'processing' 
-          AND started_at IS NOT NULL 
-          AND completed_at IS NULL 
-          AND started_at < $2
-        )
-        ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
-        [new Date(), new Date(Date.now() - this.staleJobTimeout)],
+        WHERE name = ANY($3)
+          AND (
+            (
+              status = 'pending' 
+              AND (scheduled_at IS NULL OR scheduled_at <= $1)
+            )
+            OR (
+              status = 'processing' 
+              AND started_at IS NOT NULL 
+              AND completed_at IS NULL 
+              AND started_at < $2
+            )
+          )
+          ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
+        [new Date(), new Date(Date.now() - this.staleJobTimeout), handlers],
       );
 
       if (query.rows.length === 0) {
