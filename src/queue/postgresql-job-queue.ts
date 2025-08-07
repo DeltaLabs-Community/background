@@ -24,7 +24,6 @@ export class PostgreSQLJobQueue extends JobQueue {
       maxInterval?: number;
       maxEmptyPolls?: number;
       loadFactor?: number;
-      standAlone?: boolean;
       preFetchBatchSize?: number;
     } = {},
   ) {
@@ -32,7 +31,6 @@ export class PostgreSQLJobQueue extends JobQueue {
     this.postgresStorage = storage as PostgreSQLJobStorage;
     this.concurrency = options.concurrency || 1;
     this.logging = options.logging || false;
-    this.standAlone = options.standAlone ?? true;
     this.preFetchBatchSize = options.preFetchBatchSize;
   }
 

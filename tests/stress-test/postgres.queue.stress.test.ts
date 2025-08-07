@@ -175,7 +175,6 @@ async function runStressTest() {
         const queue = new PostgreSQLJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            standAlone: true,
             processingInterval:50,
             preFetchBatchSize:1000,
         });
