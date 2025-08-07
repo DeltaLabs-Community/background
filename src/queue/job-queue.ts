@@ -304,6 +304,28 @@ export class JobQueue extends EventTarget {
             console.log(`[${this.name}] Processing prefetched job:`, job.id);
           }
 
+          if(!this.handlers.has(job.name)){
+            if (this.logging){
+              console.log(`[${this.name}] Job with no handler found: ${job.id}`)
+              console.log(`[${this.name}] Resetting Job status...`)
+            }
+            job.status = "pending" as JobStatus;
+            job.startedAt = undefined;
+            this.storage.updateJob(job)
+            .then(() => {
+              if (this.logging) {
+                console.log(`[${this.name}] Job status reset: ${job.id}`);
+              }
+            })
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error resetting job status", error);
+              }
+            })
+            this.activeJobs.delete(job.id);
+            continue;
+          }
+
           this.activeJobs.add(job.id);
           this.processJob(job)
             .catch((error) => {
@@ -321,6 +343,28 @@ export class JobQueue extends EventTarget {
           const job = await this.storage.acquireNextJob();
           if (!job) {
             break;
+          }
+
+          if(!this.handlers.has(job.name)){
+            if (this.logging){
+              console.log(`[${this.name}] Job with no handler found: ${job.id}`)
+              console.log(`[${this.name}] Resetting Job status...`)
+            }
+            job.status = "pending" as JobStatus;
+            job.startedAt = undefined;
+            this.storage.updateJob(job)
+            .then(() => {
+              if (this.logging) {
+                console.log(`[${this.name}] Job status reset: ${job.id}`);
+              }
+            })
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error resetting job status", error);
+              }
+            })
+            this.activeJobs.delete(job.id);
+            continue;
           }
 
           if (this.logging) {

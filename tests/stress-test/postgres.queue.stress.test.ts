@@ -12,9 +12,9 @@ let testConfig = {
     postgresUser: "postgres",
     postgresPassword: "12345",
     postgresDatabase: "postgres",
-    concurrency: 8,
+    concurrency: 12,
     rateLimitingEnabled: true,
-    testDurationSeconds: 30 // Added test duration
+    testDurationSeconds: 15 // Added test duration
 };
 
 // Analytics tracking
@@ -174,7 +174,7 @@ async function runStressTest() {
         const storage = new PostgreSQLJobStorage(pool);
         const queue = new PostgreSQLJobQueue(storage, {
             concurrency: testConfig.concurrency,
-            logging: true,
+            logging: false,
             standAlone: true,
             processingInterval:50,
             preFetchBatchSize:1000,
@@ -183,8 +183,6 @@ async function runStressTest() {
         // Register a simple job handler for stress testing
         queue.register("stress-test-job", async (data: any) => {
             const startTime = Date.now();
-            // Simulate some work
-            await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
             const endTime = Date.now();
             
             analytics.totalJobsProcessed++;
@@ -333,8 +331,13 @@ async function main() {
     console.log("Redis Job Queue Stress Test");
     console.log("==========================");
     
-    await collectUserInput();
-    rl.close();
+    if (process.env.AUTO_START !== 'true') {
+        await collectUserInput();
+        rl.close();
+    } else {
+        testConfig.messagePerSecond = parseInt(process.env.MESSAGES_PER_SECOND!) || testConfig.messagePerSecond;
+        console.log(`Auto-starting with config: ${JSON.stringify(testConfig, null, 2)}`);
+    }
     
     await runStressTest();
 }

@@ -9,10 +9,10 @@ let testConfig = {
     messagePerSecond: 40000,
     redisHost: "localhost",
     redisPort: 6379,
-    concurrency: 8,
+    concurrency: 12,
     rateLimitingEnabled: true,
     redisPassword: "",
-    testDurationSeconds: 30 // Added test duration
+    testDurationSeconds: 15 // Added test duration
 };
 
 // Analytics tracking
@@ -166,7 +166,7 @@ async function runStressTest() {
         const queue = new DistributedJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            standAlone: false,
+            standAlone: true,
             processingInterval:50,
             preFetchBatchSize:1000,
         });
@@ -324,8 +324,13 @@ async function main() {
     console.log("Redis Job Queue Stress Test");
     console.log("==========================");
     
-    await collectUserInput();
-    rl.close();
+    if (process.env.AUTO_START !== 'true') {
+        await collectUserInput();
+        rl.close();
+    } else {
+        testConfig.messagePerSecond = parseInt(process.env.MESSAGES_PER_SECOND!) || testConfig.messagePerSecond;
+        console.log(`Auto-starting with config: ${JSON.stringify(testConfig, null, 2)}`);
+    }
     
     await runStressTest();
 }

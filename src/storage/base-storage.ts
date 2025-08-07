@@ -8,7 +8,7 @@ export interface JobStorage {
   getJob(id: string): Promise<Job | null>;
   getJobsByStatus(status: JobStatus): Promise<Job[]>;
   updateJob(job: Job): Promise<void>;
-  acquireNextJob(): Promise<Job | null>;
+  acquireNextJob(handlerNames?:string []): Promise<Job | null>;
   acquireNextJobs(batchSize: number): Promise<Job[]>;
   completeJob(jobId: string, result: any): Promise<void>;
   failJob(jobId: string, error: string): Promise<void>;

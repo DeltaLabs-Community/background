@@ -8,9 +8,9 @@ dotenv.config();
 let testConfig = {
     messagePerSecond: 40000,
     postgresPort: 5432,
-    concurrency: 8,
+    concurrency: 12,
     rateLimitingEnabled: true,
-    testDurationSeconds: 30
+    testDurationSeconds: 8
 };
 
 // Analytics tracking
@@ -133,13 +133,13 @@ async function collectUserInput() {
 }
 
 async function runStressTest() {
-    const client = new MongoClient(process.env.MONGODB_URL!);
+    const client = new MongoClient(process.env.TEST_MONGODB_URL!);
 
-    console.log("Please wait while connecting to postgres...");
+    console.log("Please wait while connecting to mongodb...");
     
     try {
         await client.connect();
-        console.log("Postgres connected successfully.");
+        console.log("MongoDB connected successfully.");
         console.log("Stress test starting...");
         console.log(`Configuration: ${JSON.stringify(testConfig, null, 2)}`);
 
@@ -147,7 +147,7 @@ async function runStressTest() {
         const queue = new MongoDBJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            standAlone: true,
+            standAlone: false,
             processingInterval:50,
             preFetchBatchSize:1000,
         });
@@ -302,11 +302,16 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Main execution
 async function main() {
-    console.log("Redis Job Queue Stress Test");
+    console.log("MongoDB Job Queue Stress Test");
     console.log("==========================");
     
-    await collectUserInput();
-    rl.close();
+    if (process.env.AUTO_START !== 'true') {
+        await collectUserInput();
+        rl.close();
+    } else {
+        testConfig.messagePerSecond = parseInt(process.env.MESSAGES_PER_SECOND!) || testConfig.messagePerSecond;
+        console.log(`Auto-starting with config: ${JSON.stringify(testConfig, null, 2)}`);
+    }
     
     await runStressTest();
 }

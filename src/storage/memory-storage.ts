@@ -59,7 +59,7 @@ export class InMemoryJobStorage implements JobStorage {
     }
   }
 
-  async acquireNextJob(): Promise<Job | null> {
+  async acquireNextJob(_?:string []): Promise<Job | null> {
     try {
       // First, filter to get eligible jobs
       const pendingJobs = Array.from(this.jobs.values()).filter((job) => {
@@ -98,7 +98,7 @@ export class InMemoryJobStorage implements JobStorage {
     }
   }
 
-  acquireNextJobs(batchSize: number): Promise<Job[]> {
+  acquireNextJobs(_: number): Promise<Job[]> {
     throw new Error("Method not implemented.");
   }
 

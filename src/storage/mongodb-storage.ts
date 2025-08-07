@@ -94,12 +94,13 @@
      * Acquire the next pending job
      * @returns The next pending job, or null if no pending jobs are available
      */
-    async acquireNextJob(): Promise<Job | null> {
+    async acquireNextJob(handlerNames?:string []): Promise<Job | null> {
       try {
         const staleThreshold = new Date(Date.now() - this.staleJobTimeout);
         // First try to find pending jobs
         let job = await this.collection.findOneAndUpdate(
           {
+            ...(handlerNames && { name: { $in: handlerNames } }),
             status: "pending",
             $or: [
               { scheduledAt: { $exists: false } },
@@ -113,6 +114,7 @@
         if (!job) {
           job = await this.collection.findOneAndUpdate(
             {
+              ...(handlerNames && { name: { $in: handlerNames } }),
               status: "processing",
               startedAt: { $lte: staleThreshold } as any,
               $or: [

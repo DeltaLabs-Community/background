@@ -11,12 +11,15 @@ const storage = new PostgreSQLJobStorage(pool, {
 
 const queue = new PostgreSQLJobQueue(storage, {
   name: "test",
-  processingInterval: 500,
+  processingInterval: 50,
+  concurrency : 20,
+  logging:true,
+  preFetchBatchSize:2000,
   maxRetries: 3,
 });
 
-queue.register("test-job", async (data) => {
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+queue.register("stress-test-job", async (data) => {
+  await new Promise((resolve) => setTimeout(resolve, 40));
 });
 
 queue.addEventListener("completed", (event: any) => {

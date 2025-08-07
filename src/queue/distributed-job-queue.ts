@@ -65,6 +65,8 @@ export class DistributedJobQueue extends JobQueue {
       const availableSlots = this.concurrency - this.activeJobs.size;
       let jobsProcessed = 0;
 
+      const handlers = Array.from(this.handlers.keys());
+
       if (this.preFetchBatchSize) {
         // Process jobs from buffer
         for (let i = 0; i < availableSlots && this.jobBuffer.length > 0; i++) {
@@ -89,7 +91,7 @@ export class DistributedJobQueue extends JobQueue {
       } else {
         // Original single job processing
         for (let i = 0; i < availableSlots; i++) {
-          const job = await this.redisStorage.acquireNextJob(this.jobTTL);
+          const job = await this.redisStorage.acquireNextJob(handlers);
           if (!job) {
             break;
           }
