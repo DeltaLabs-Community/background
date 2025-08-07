@@ -91,7 +91,7 @@ export class DistributedJobQueue extends JobQueue {
       } else {
         // Original single job processing
         for (let i = 0; i < availableSlots; i++) {
-          const job = await this.redisStorage.acquireNextJob(handlers,this.jobTTL);
+          const job = await this.redisStorage.acquireNextJob(handlers);
           if (!job) {
             break;
           }

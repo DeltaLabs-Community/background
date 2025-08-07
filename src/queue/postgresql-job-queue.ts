@@ -64,6 +64,23 @@ export class PostgreSQLJobQueue extends JobQueue {
           }
 
           if(!this.handlers.has(job.name)){
+            if (this.logging){
+              console.log(`[${this.name}] Job with no handler found: ${job.id}`)
+              console.log(`[${this.name}] Resetting Job status...`)
+            }
+            job.status = "pending" as JobStatus;
+            job.startedAt = undefined;
+            this.postgresStorage.updateJob(job)
+            .then(() => {
+              if (this.logging) {
+                console.log(`[${this.name}] Job status reset: ${job.id}`);
+              }
+            })
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error resetting job status", error);
+              }
+            })
             this.activeJobs.delete(job.id);
             continue;
           }
@@ -81,6 +98,29 @@ export class PostgreSQLJobQueue extends JobQueue {
           if (!job) {
             break;
           }
+
+          if(!this.handlers.has(job.name)){
+            if (this.logging){
+              console.log(`[${this.name}] Job with no handler found: ${job.id}`)
+              console.log(`[${this.name}] Resetting Job status...`)
+            }
+            job.status = "pending" as JobStatus;
+            job.startedAt = undefined;
+            this.postgresStorage.updateJob(job)
+            .then(() => {
+              if (this.logging) {
+                console.log(`[${this.name}] Job status reset: ${job.id}`);
+              }
+            })
+            .catch((error) => {
+              if (this.logging) {
+                console.error("Error resetting job status", error);
+              }
+            })
+            this.activeJobs.delete(job.id);
+            continue;
+          }
+
           if (this.logging) {
             console.log(`[${this.name}] Processing job:`, job);
             console.log(

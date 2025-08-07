@@ -2,19 +2,9 @@ import { Job, JobStatus } from "../types";
 import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
 
-/**
- * Redis storage adapter for JobQueue
- *
- * This storage adapter uses Redis to store jobs, making it suitable
- * for distributed environments with multiple instances/processes.
- *
- * Note: You must install the 'ioredis' package to use this adapter:
- * npm install ioredis
- */
-
 export interface RedisStorage extends JobStorage {
   // Atomic job acquisition
-  acquireNextJob(handlerNames?:string[],ttl?: number): Promise<Job | null>;
+  acquireNextJob(handlerNames?:string[]): Promise<Job | null>;
   // Get jobs by priority
   getJobsByPriority(priority: number): Promise<Job[]>;
   // Get scheduled jobs within a time range
@@ -507,7 +497,7 @@ export class RedisJobStorage implements RedisStorage {
    * Also checks for stale jobs that have been processing for too long
    * @returns The next job or null if no job is available
    */
-  async acquireNextJob(handlerNames?: string[],ttl: number = 30): Promise<Job | null> {
+  async acquireNextJob(handlerNames?: string[]): Promise<Job | null> {
     try {
       await this.moveScheduledJobs();
 
@@ -515,19 +505,55 @@ export class RedisJobStorage implements RedisStorage {
       
       for (let priority = 1; priority <= 10; priority++) {
         const queueKey = this.priorityQueueKeys[priority];
-        jobId = await this.redis.rpop(queueKey);
-        if (jobId) break;
+        
+        if (handlerNames && handlerNames.length > 0) {
+          
+          let foundJobId: string | null = null;
+          const tempJobIds: string[] = [];
+          
+          while (true) {
+            const tempJobId = await this.redis.rpop(queueKey);
+            if (!tempJobId) break;
+            
+            const jobKey = this.getJobKey(tempJobId);
+            const jobHandlerName = await this.redis.hget(jobKey, 'name');
+            
+            if (jobHandlerName && handlerNames.includes(jobHandlerName)) {
+              foundJobId = tempJobId;
+              break;
+            } else {
+              tempJobIds.push(tempJobId);
+            }
+          }
+          
+          for (let i = tempJobIds.length - 1; i >= 0; i--) {
+            await this.redis.rpush(queueKey, tempJobIds[i]);
+          }
+          
+          if (foundJobId) {
+            jobId = foundJobId;
+            break;
+          }
+        } else {
+          // No handler filtering - use original logic
+          jobId = await this.redis.rpop(queueKey);
+          if (jobId) break;
+        }
       }
       
+      // If no job found in priority queues, check for stale processing jobs
       if (!jobId) {
         const processingJobs = await this.getJobsByStatus('processing');
         const now = Date.now();
         const staleTime = now - this.staleJobTimeout;
         
-        // Find the first stale job
-        const staleJob = processingJobs.find(job => 
-          job.startedAt && job.startedAt.getTime() < staleTime
-        );
+        // Find the first stale job that matches handler names (if specified)
+        const staleJob = processingJobs.find(job => {
+          const isStale = job.startedAt && job.startedAt.getTime() < staleTime;
+          const matchesHandler = !handlerNames || handlerNames.length === 0 || 
+                                (job.name && handlerNames.includes(job.name));
+          return isStale && matchesHandler;
+        });
         
         if (staleJob) {
           jobId = staleJob.id;
