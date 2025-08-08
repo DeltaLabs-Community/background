@@ -2,6 +2,7 @@ import { JobStorage } from "../storage/base-storage";
 import { JobQueue } from "./job-queue";
 import { MongoDBJobStorage } from "../storage/mongodb-storage";
 import { Job, JobStatus } from "../types";
+import { QueueEvent } from "../utils/queue-event";
 
 export class MongoDBJobQueue extends JobQueue {
   private readonly mongodbStorage: MongoDBJobStorage;
@@ -158,7 +159,7 @@ export class MongoDBJobQueue extends JobQueue {
 
       const newJobs = await this.mongodbStorage.acquireNextJobs(neededJobs);
       this.jobBuffer.push(...newJobs);
-
+      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }

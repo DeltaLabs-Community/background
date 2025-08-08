@@ -2,6 +2,7 @@ import { JobStorage } from "../storage/base-storage";
 import { JobQueue } from "./job-queue";
 import { PostgreSQLJobStorage } from "../storage/postgresql-storage";
 import { Job, JobStatus } from "../types";
+import { QueueEvent } from "../utils/queue-event";
 
 export class PostgreSQLJobQueue extends JobQueue {
   private readonly postgresStorage: PostgreSQLJobStorage;
@@ -160,7 +161,7 @@ export class PostgreSQLJobQueue extends JobQueue {
 
       const newJobs = await this.postgresStorage.acquireNextJobs(neededJobs);
       this.jobBuffer.push(...newJobs);
-
+      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }
@@ -192,12 +193,12 @@ export class PostgreSQLJobQueue extends JobQueue {
           retryCount: retryCount + 1,
           error: `${error instanceof Error ? error.message : String(error)} (Retry ${retryCount + 1}/${this.maxRetries})`,
         };
-        await this.postgresStorage.updateJob(updatedJob);
+        this.postgresStorage.updateJob(updatedJob);
       } else {
         job.status = "failed";
         job.completedAt = new Date();
         job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
-        await this.postgresStorage.updateJob(job);
+        this.postgresStorage.updateJob(job);
       }
     }
   }

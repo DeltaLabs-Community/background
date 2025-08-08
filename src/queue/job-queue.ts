@@ -404,6 +404,7 @@ export class JobQueue extends EventTarget {
       const newJobs = await this.storage.acquireNextJobs(neededJobs);
       this.jobBuffer.push(...newJobs);
 
+      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }

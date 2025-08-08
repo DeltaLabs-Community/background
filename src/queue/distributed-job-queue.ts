@@ -1,6 +1,7 @@
 import { Job, JobStatus } from "../types";
 import { JobQueue } from "./job-queue";
 import { RedisStorage } from "../storage/redis-storage";
+import { QueueEvent } from "../utils/queue-event";
 /**
  * DistributedJobQueue extends JobQueue to provide distributed processing
  * capabilities across multiple instances/processes using Redis atomic operations.
@@ -141,7 +142,7 @@ export class DistributedJobQueue extends JobQueue {
 
       const newJobs = await this.redisStorage.acquireNextJobs(neededJobs);
       this.jobBuffer.push(...newJobs);
-
+      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }
