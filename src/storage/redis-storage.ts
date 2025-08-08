@@ -1,7 +1,7 @@
 import { Job, JobStatus } from "../types";
 import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
-import { atomicAcquireScript, completeJobScript, failJobScript, saveJobScript, updateJobScript } from "./lua-scripts/scripts";
+import { atomicAcquireScript, completeJobScript, failJobScript, saveJobScript, updateJobScript,moveScheduledJobsScript } from "./lua-scripts/scripts";
 
 export interface RedisStorage extends JobStorage {
   // Get jobs by priority
@@ -61,7 +61,7 @@ export class RedisJobStorage implements RedisStorage {
     this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
     this.saveJobScript = saveJobScript;
     this.updateJobScript = updateJobScript;
-    this.moveScheduledJobsScript = this.moveScheduledJobsScript;
+    this.moveScheduledJobsScript = moveScheduledJobsScript;
     this.completeJobScript = completeJobScript;
     this.failJobScript = failJobScript;
     this.atomicAcquireScript = atomicAcquireScript
