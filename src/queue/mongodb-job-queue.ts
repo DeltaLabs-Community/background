@@ -156,10 +156,12 @@ export class MongoDBJobQueue extends JobQueue {
       if (this.logging) {
         console.log(`[${this.name}] Refilling job buffer, need ${neededJobs} jobs`);
       }
-
-      const newJobs = await this.mongodbStorage.acquireNextJobs(neededJobs);
+      const handlerNames = Array.from(this.handlers.keys());
+      const newJobs = await this.mongodbStorage.acquireNextJobs(neededJobs,handlerNames);
       this.jobBuffer.push(...newJobs);
-      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
+      if(this.jobBuffer.length > 0){
+        this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
+      }
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }

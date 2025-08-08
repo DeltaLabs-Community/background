@@ -17,20 +17,34 @@ const jobStorage = new RedisJobStorage(redis, {
 
 const queue = new DistributedJobQueue(jobStorage, {
   name: "test",
-  processingInterval: 1000,
+  processingInterval: 50,
   maxRetries: 3,
+  concurrency: 10,
+  preFetchBatchSize:50,
+  logging: false,
 });
 
-queue.register("test", async (data) => {
+queue.register("test-job", async (data) => {
   console.log(data);
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  return { processed: true };
 });
 
 queue.addEventListener("completed", (event: any) => {
-  console.log(event.data?.job.id);
 });
 
+queue.addEventListener("buffer-refill-success", (event: any) => {
+  console.log("buffer-refill-success")
+});
+
+
 queue.start();
+
+
+for(let i = 0; i < 1000; i ++){
+  queue.add("test-job",{
+    i:i
+  })
+}
 
 ["SIGINT", "SIGTERM", "SIGKILL"].forEach((signal) => {
   process.on(signal, () => {

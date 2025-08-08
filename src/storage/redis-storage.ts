@@ -10,6 +10,8 @@ export interface RedisStorage extends JobStorage {
   getScheduledJobs(startTime: Date, endTime?: Date): Promise<Job[]>;
   // Clear all jobs
   clear(): Promise<void>;
+  // Acquire the next job from the queue
+  acquireNextJobs(batchSize: number,handlerNames?: string[]): Promise<Job[]>;
 }
 
 export class RedisJobStorage implements RedisStorage {
@@ -65,13 +67,13 @@ export class RedisJobStorage implements RedisStorage {
     this.atomicAcquireScript = atomicAcquireScript
   }
 
-  async acquireNextJobs(batchSize: number): Promise<Job[]> {
+  async acquireNextJobs(batchSize: number,handlerNames?: string[]): Promise<Job[]> {
     try {
       const jobs: Job[] = [];
       
       for (let i = 0; i < batchSize; i++) {
-        const job = await this.acquireNextJob();
-        if (!job) {
+        const job = await this.acquireNextJob(handlerNames);
+         if (!job) {
           break;
         }
         jobs.push(job);

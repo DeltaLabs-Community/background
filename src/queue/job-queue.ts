@@ -400,8 +400,8 @@ export class JobQueue extends EventTarget {
       if (this.logging) {
         console.log(`[${this.name}] Refilling job buffer, need ${neededJobs} jobs`);
       }
-
-      const newJobs = await this.storage.acquireNextJobs(neededJobs);
+      const handlerNames = Array.from(this.handlers.keys());
+      const newJobs = await this.storage.acquireNextJobs(neededJobs,handlerNames);
       this.jobBuffer.push(...newJobs);
 
       this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))

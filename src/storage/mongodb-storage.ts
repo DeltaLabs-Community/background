@@ -141,9 +141,8 @@
    * @param batchSize - Number of jobs to prefetch
    * @returns Array of acquired jobs
    */
-    async acquireNextJobs(batchSize: number): Promise<Job[]> {
+    async acquireNextJobs(batchSize: number,handlerNames?:string []): Promise<Job[]> {
       const session = this.mongoClient.startSession();
-      
       try {
         let jobs: Job[] = [];
         
@@ -154,6 +153,7 @@
           const availableJobs = await this.collection
             .find(
               {
+                ...(handlerNames && { name: { $in: handlerNames } }),
                 $or: [
                   {
                     status: 'pending',

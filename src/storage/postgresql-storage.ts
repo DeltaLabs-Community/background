@@ -210,7 +210,7 @@ export class PostgreSQLJobStorage implements JobStorage {
    * Acquire the next pending job
    * @returns The next pending job, or null if no pending jobs are available
    */
-  async acquireNextJob(handlers:string []): Promise<Job | null> {
+  async acquireNextJob(handlerNames:string []): Promise<Job | null> {
     if (!this.initialized) {
       await this.initialize();
     }
@@ -235,7 +235,7 @@ export class PostgreSQLJobStorage implements JobStorage {
             )
           )
           ORDER BY priority ASC, created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED`,
-        [new Date(), new Date(Date.now() - this.staleJobTimeout), handlers],
+        [new Date(), new Date(Date.now() - this.staleJobTimeout), handlerNames],
       );
 
       if (query.rows.length === 0) {
@@ -271,7 +271,7 @@ export class PostgreSQLJobStorage implements JobStorage {
     }
   }
 
-async acquireNextJobs(batchSize: number): Promise<Job[]> {
+async acquireNextJobs(batchSize: number, handlerNames?:string []): Promise<Job[]> {
   if (!this.initialized) {
     await this.initialize();
   }
@@ -286,7 +286,8 @@ async acquireNextJobs(batchSize: number): Promise<Job[]> {
     const query = await client.query(
       `UPDATE ${this.tableName} 
       SET status = 'processing', started_at = $1
-      WHERE id IN (
+      WHERE name = ANY($4)
+      AND id IN (
         SELECT id FROM ${this.tableName} 
         WHERE (
           status = 'pending' 
@@ -303,7 +304,7 @@ async acquireNextJobs(batchSize: number): Promise<Job[]> {
         FOR UPDATE SKIP LOCKED
       )
       RETURNING *`,
-      [new Date(), new Date(Date.now() - this.staleJobTimeout), batchSize]
+      [new Date(), new Date(Date.now() - this.staleJobTimeout), batchSize, handlerNames]
     );
 
     await client.query("COMMIT");

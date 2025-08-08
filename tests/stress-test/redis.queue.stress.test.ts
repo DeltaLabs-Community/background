@@ -157,24 +157,6 @@ async function runStressTest() {
             preFetchBatchSize: 2000, // Increased batch size for better performance
         });
 
-        // Register a simple job handler for stress testing
-        queue.register("stress-test-job", async (data: any) => {
-            const startTime = Date.now();
-            // Simulate some work
-            await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
-            const endTime = Date.now();
-            
-            analytics.totalJobsProcessed++;
-            analytics.jobsProcessedThisSecond++;
-            analytics.responseTimes.push(endTime - startTime);
-            updateRealTimeStats();
-            
-            return { processed: true, timestamp: Date.now() };
-        });
-
-        // Start the queue processing
-        await queue.start();
-
         analytics.startTime = Date.now();
         analytics.lastSecondTimestamp = Math.floor(Date.now() / 1000);
         

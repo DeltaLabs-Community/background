@@ -9,7 +9,6 @@ import { QueueEvent } from "../utils/queue-event";
 export class DistributedJobQueue extends JobQueue {
   private readonly redisStorage: RedisStorage;
   private readonly jobTTL: number = 30; // seconds
-  private queueName: string = "distributed-queue";
 
   /**
    * Create a distributed job queue
@@ -38,7 +37,6 @@ export class DistributedJobQueue extends JobQueue {
     this.redisStorage = storage;
     this.jobTTL = options.jobTTL || 30;
     this.logging = options.logging || false;
-    this.queueName = options.name || "distributed-queue";
     this.preFetchBatchSize = options.preFetchBatchSize;
   }
 
@@ -56,10 +54,6 @@ export class DistributedJobQueue extends JobQueue {
       if (this.activeJobs.size >= this.concurrency || this.isStopping) {
         return;
       }
-
-      console.log(`[${this.name}] Processing next batch of jobs`)
-
-      console.log(`[${this.name}] Pre-fetching is ${this.preFetchBatchSize ? "enabled" : "disabled"}`)
 
       if (this.preFetchBatchSize) {
         await this.refillJobBuffer();
@@ -143,10 +137,12 @@ export class DistributedJobQueue extends JobQueue {
       if (this.logging) {
         console.log(`[${this.name}] Refilling job buffer, need ${neededJobs} jobs`);
       }
-
-      const newJobs = await this.redisStorage.acquireNextJobs(neededJobs);
+      const handlers = Array.from(this.handlers.keys());
+      const newJobs = await this.redisStorage.acquireNextJobs(neededJobs,handlers);
       this.jobBuffer.push(...newJobs);
-      this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
+      if(this.jobBuffer.length > 0){
+        this.dispatchEvent(new QueueEvent("buffer-refill-success",{}))
+      }
       if (this.logging && newJobs.length > 0) {
         console.log(`[${this.name}] Prefetched ${newJobs.length} jobs, buffer size: ${this.jobBuffer.length}`);
       }
@@ -161,7 +157,7 @@ export class DistributedJobQueue extends JobQueue {
     try {
       if (this.logging) {
         console.log(
-          `[${this.queueName}] Starting to process job ${job.id} (${job.name})`,
+          `[${this.name}] Starting to process job ${job.id} (${job.name})`,
         );
       }
       // Check if handler exists before trying to process
@@ -171,12 +167,12 @@ export class DistributedJobQueue extends JobQueue {
       // Get the handler using the parent's processJob method
       await super.processJob(job);
       if (this.logging && job.repeat) {
-        console.log(`[${this.queueName}] Completed repeatable job ${job.id}`);
+        console.log(`[${this.name}] Completed repeatable job ${job.id}`);
       }
     } catch (error) {
       // Log the error
       if (this.logging) {
-        console.error(`[${this.queueName}] Error in processJob:`, error);
+        console.error(`[${this.name}] Error in processJob:`, error);
       }
       // Mark job as failed atomically
       const errorMessage =

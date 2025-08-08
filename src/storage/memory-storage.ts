@@ -59,9 +59,8 @@ export class InMemoryJobStorage implements JobStorage {
     }
   }
 
-  async acquireNextJob(_?:string []): Promise<Job | null> {
+  async acquireNextJob(handlerNames?:string []): Promise<Job | null> {
     try {
-      // First, filter to get eligible jobs
       const pendingJobs = Array.from(this.jobs.values()).filter((job) => {
         if (job.status !== "pending") return false;
         if (job.scheduledAt) {
@@ -79,16 +78,14 @@ export class InMemoryJobStorage implements JobStorage {
         }
         return a.createdAt.getTime() - b.createdAt.getTime();
       });
-
       const job = sortedJobs[0];
+      if(!handlerNames || !(handlerNames.find((handlerName) => job.name === handlerName))){
+        return null;
+      }
       if (!job) return null;
-
       job.status = "processing";
       job.startedAt = new Date();
-
-      // Store the updated job
       this.jobs.set(job.id, job);
-
       return job;
     } catch (error) {
       if (this.logging) {
@@ -98,8 +95,38 @@ export class InMemoryJobStorage implements JobStorage {
     }
   }
 
-  acquireNextJobs(_: number): Promise<Job[]> {
-    throw new Error("Method not implemented.");
+  async acquireNextJobs(batchSize: number,handlerNames?:string []): Promise<Job[]> {
+    try {
+      const pendingJobs = Array.from(this.jobs.values()).filter((job) => {
+        if (job.status !== "pending") return false;
+          if (job.scheduledAt) {
+            const now = new Date();
+            return job.scheduledAt <= now;
+          }
+          return true;
+      });
+      const sortedJobs = pendingJobs.sort((a, b) => {
+          const priorityA = a.priority || 10;
+          const priorityB = b.priority || 10;
+          if (priorityA !== priorityB) {
+            return priorityA - priorityB;
+          }
+          return a.createdAt.getTime() - b.createdAt.getTime();
+      });
+      let jobList = sortedJobs.slice(0, batchSize);
+      jobList = jobList.filter((job) => handlerNames ? handlerNames.find((handlerName) => job.name === handlerName) : true) 
+      jobList.forEach((job) => {
+        job.status = "processing";
+        job.startedAt = new Date();
+        this.jobs.set(job.id, job);
+      });
+      return jobList;
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[InMemoryJobStorage] Error acquiring next job:`, error);
+      }
+      return [];
+    }
   }
 
   async completeJob(jobId: string, result: any): Promise<void> {
