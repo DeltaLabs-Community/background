@@ -177,7 +177,7 @@ export class DistributedJobQueue extends JobQueue {
       // Mark job as failed atomically
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      await this.redisStorage.failJob(job.id, errorMessage);
+      this.redisStorage.failJob(job.id, errorMessage);
       throw error;
     }
   }

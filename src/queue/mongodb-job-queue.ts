@@ -191,12 +191,12 @@ export class MongoDBJobQueue extends JobQueue {
           retryCount: retryCount + 1,
           error: `${error instanceof Error ? error.message : String(error)} (Retry ${retryCount + 1}/${this.maxRetries})`,
         };
-        await this.mongodbStorage.updateJob(updatedJob);
+        this.mongodbStorage.updateJob(updatedJob);
       } else {
         job.status = "failed";
         job.completedAt = new Date();
         job.error = `Failed after ${this.maxRetries} retries. Last error: ${error instanceof Error ? error.message : String(error)}`;
-        await this.mongodbStorage.updateJob(job);
+        this.mongodbStorage.updateJob(job);
       }
     }
   }
