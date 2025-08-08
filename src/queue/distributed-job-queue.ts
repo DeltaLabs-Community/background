@@ -57,6 +57,10 @@ export class DistributedJobQueue extends JobQueue {
         return;
       }
 
+      console.log(`[${this.name}] Processing next batch of jobs`)
+
+      console.log(`[${this.name}] Pre-fetching is ${this.preFetchBatchSize ? "enabled" : "disabled"}`)
+
       if (this.preFetchBatchSize) {
         await this.refillJobBuffer();
       }

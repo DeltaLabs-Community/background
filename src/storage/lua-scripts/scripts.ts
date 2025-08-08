@@ -1,114 +1,150 @@
-export const atomicAcquireScript : string = `
-      -- KEYS[1] = priority queue key prefix (e.g., "jobqueue:priority:")
-      -- KEYS[2] = job key prefix (e.g., "jobqueue:job:")
-      -- KEYS[3] = status key prefix (e.g., "jobqueue:status:")
-      -- KEYS[4] = scheduled jobs key
-      -- ARGV[1] = current timestamp
-      -- ARGV[2] = stale timeout (milliseconds)
-      -- ARGV[3] = handler names (JSON array, optional)
+export const atomicAcquireScript: string = `
+    -- KEYS[1] = priority queue key prefix
+    -- KEYS[2] = job key prefix
+    -- KEYS[3] = status key prefix
+    -- KEYS[4] = scheduled jobs key
+    -- ARGV[1] = current timestamp
+    -- ARGV[2] = stale timeout
+    -- ARGV[3] = handler names count
+    -- ARGV[4+] = handler names
 
-      local priorityPrefix = KEYS[1]
-      local jobPrefix = KEYS[2]
-      local statusPrefix = KEYS[3]
-      local scheduledKey = KEYS[4]
-      local now = tonumber(ARGV[1])
-      local staleTimeout = tonumber(ARGV[2])
-      local handlerNames = ARGV[3] and cjson.decode(ARGV[3]) or nil
+    local priorityPrefix = KEYS[1]
+    local jobPrefix = KEYS[2]
+    local statusPrefix = KEYS[3]
+    local scheduledKey = KEYS[4]
+    local now = tonumber(ARGV[1])
+    local staleTimeout = tonumber(ARGV[2])
+    local handlerCount = tonumber(ARGV[3]) or 0
 
-      -- Helper function to check if handler matches
-      local function matchesHandler(jobName)
-        if not handlerNames or #handlerNames == 0 then
-          return true
+    -- Debug logging
+    redis.log(redis.LOG_WARNING, "=== ACQUIRE JOB DEBUG ===")
+    redis.log(redis.LOG_WARNING, "Now: " .. tostring(now))
+    redis.log(redis.LOG_WARNING, "Handler count: " .. tostring(handlerCount))
+    redis.log(redis.LOG_WARNING, "Keys: " .. priorityPrefix .. ", " .. jobPrefix .. ", " .. statusPrefix .. ", " .. scheduledKey)
+    
+    -- Build handler names set
+    local handlerSet = {}
+    if handlerCount > 0 then
+        for i = 1, handlerCount do
+            local handlerName = ARGV[3 + i]
+            handlerSet[handlerName] = true
+            redis.log(redis.LOG_WARNING, "Handler registered: " .. handlerName)
         end
-        for i, handler in ipairs(handlerNames) do
-          if handler == jobName then
+    end
+
+    -- Helper function
+    local function matchesHandler(jobName)
+        if handlerCount == 0 then
+            redis.log(redis.LOG_WARNING, "No handler filter, accepting job: " .. (jobName or "nil"))
             return true
-          end
         end
-        return false
-      end
+        local matches = handlerSet[jobName] ~= nil
+        redis.log(redis.LOG_WARNING, "Job '" .. (jobName or "nil") .. "' matches handler: " .. tostring(matches))
+        return matches
+    end
 
-      -- 1. Move scheduled jobs first
-      local dueJobs = redis.call('ZRANGEBYSCORE', scheduledKey, 0, now)
-      for i, jobId in ipairs(dueJobs) do
+    -- 1. Move scheduled jobs
+    local dueJobs = redis.call('ZRANGEBYSCORE', scheduledKey, 0, now)
+    redis.log(redis.LOG_WARNING, "Due scheduled jobs: " .. #dueJobs)
+    
+    for i, jobId in ipairs(dueJobs) do
         redis.call('ZREM', scheduledKey, jobId)
         local jobKey = jobPrefix .. jobId
         if redis.call('EXISTS', jobKey) == 1 then
-          local status = redis.call('HGET', jobKey, 'status')
-          local priority = tonumber(redis.call('HGET', jobKey, 'priority')) or 3
-          if status == 'pending' then
-            priority = math.max(1, math.min(10, priority))
-            redis.call('LPUSH', priorityPrefix .. priority, jobId)
-          end
+            local status = redis.call('HGET', jobKey, 'status')
+            local priority = tonumber(redis.call('HGET', jobKey, 'priority')) or 3
+            if status == 'pending' then
+                priority = math.max(1, math.min(10, priority))
+                redis.call('LPUSH', priorityPrefix .. priority, jobId)
+                redis.log(redis.LOG_WARNING, "Moved scheduled job " .. jobId .. " to priority " .. priority)
+            end
         end
-      end
+    end
 
-      -- 2. Try to acquire from priority queues
-      for priority = 1, 10 do
+    -- 2. Try to acquire from priority queues
+    for priority = 1, 10 do
         local queueKey = priorityPrefix .. priority
+        local queueLength = redis.call('LLEN', queueKey)
         
-        while true do
-          local jobId = redis.call('RPOP', queueKey)
-          if not jobId then
-            break
-          end
-          
-          local jobKey = jobPrefix .. jobId
-          if redis.call('EXISTS', jobKey) == 0 then
-            -- Job doesn't exist, continue to next
-            goto continue
-          end
-          
-          local currentStatus = redis.call('HGET', jobKey, 'status')
-          if currentStatus ~= 'pending' then
-            -- Job is not pending, continue to next
-            goto continue
-          end
-          
-          local jobName = redis.call('HGET', jobKey, 'name')
-          if not matchesHandler(jobName) then
-            -- Put job back at front of queue and continue
-            redis.call('LPUSH', queueKey, jobId)
-            goto continue
-          end
-          
-          -- Atomically acquire the job
-          local oldStatusKey = statusPrefix .. currentStatus
-          local newStatusKey = statusPrefix .. 'processing'
-          
-          redis.call('HSET', jobKey, 
-            'status', 'processing',
-            'startedAt', now
-          )
-          redis.call('SREM', oldStatusKey, jobId)
-          redis.call('SADD', newStatusKey, jobId)
-          
-          return jobId
-          
-          ::continue::
+        if queueLength > 0 then
+            redis.log(redis.LOG_WARNING, "Priority " .. priority .. " queue has " .. queueLength .. " jobs")
         end
-      end
+        
+        local maxAttempts = math.min(100, queueLength + 1)
+        local attempts = 0
+        
+        while attempts < maxAttempts do
+            attempts = attempts + 1
+            local jobId = redis.call('RPOP', queueKey)
+            
+            if not jobId then
+                break
+            end
+            
+            redis.log(redis.LOG_WARNING, "Checking job: " .. jobId)
+            local jobKey = jobPrefix .. jobId
+            
+            if redis.call('EXISTS', jobKey) == 1 then
+                local currentStatus = redis.call('HGET', jobKey, 'status')
+                redis.log(redis.LOG_WARNING, "Job " .. jobId .. " status: " .. (currentStatus or "nil"))
+                
+                if currentStatus == 'pending' then
+                    local jobName = redis.call('HGET', jobKey, 'name')
+                    redis.log(redis.LOG_WARNING, "Job " .. jobId .. " name: " .. (jobName or "nil"))
+                    
+                    if matchesHandler(jobName) then
+                        -- Acquire the job
+                        local oldStatusKey = statusPrefix .. currentStatus
+                        local newStatusKey = statusPrefix .. 'processing'
+                        
+                        -- Use HSET with multiple field-value pairs
+                        redis.call('HSET', jobKey, 'status', 'processing', 'startedAt', tostring(now))
+                        redis.call('SREM', oldStatusKey, jobId)
+                        redis.call('SADD', newStatusKey, jobId)
+                        
+                        redis.log(redis.LOG_WARNING, "ACQUIRED JOB: " .. jobId)
+                        return jobId
+                    else
+                        -- Put back at end
+                        redis.call('LPUSH', queueKey, jobId)
+                        redis.log(redis.LOG_WARNING, "Job " .. jobId .. " doesn't match, put back")
+                    end
+                else
+                    redis.log(redis.LOG_WARNING, "Job " .. jobId .. " not pending, skipping")
+                end
+            else
+                redis.log(redis.LOG_WARNING, "Job " .. jobId .. " doesn't exist")
+            end
+        end
+    end
 
-      -- 3. Check for stale processing jobs
-      local staleThreshold = now - staleTimeout
-      local processingKey = statusPrefix .. 'processing'
-      local processingJobs = redis.call('SMEMBERS', processingKey)
+    -- 3. Check stale jobs
+    local staleThreshold = now - staleTimeout
+    local processingKey = statusPrefix .. 'processing'
+    local processingJobs = redis.call('SMEMBERS', processingKey)
+    redis.log(redis.LOG_WARNING, "Checking " .. #processingJobs .. " processing jobs for staleness")
 
-      for i, jobId in ipairs(processingJobs) do
+    for i, jobId in ipairs(processingJobs) do
         local jobKey = jobPrefix .. jobId
         if redis.call('EXISTS', jobKey) == 1 then
-          local startedAt = redis.call('HGET', jobKey, 'startedAt')
-          local jobName = redis.call('HGET', jobKey, 'name')
-          
-          if startedAt and tonumber(startedAt) < staleThreshold and matchesHandler(jobName) then
-            -- Reacquire stale job
-            redis.call('HSET', jobKey, 'startedAt', now)
-            return jobId
-          end
+            local startedAtStr = redis.call('HGET', jobKey, 'startedAt')
+            local jobName = redis.call('HGET', jobKey, 'name')
+            
+            redis.log(redis.LOG_WARNING, "Stale check - Job " .. jobId .. " startedAt: " .. (startedAtStr or "nil"))
+            
+            if startedAtStr and matchesHandler(jobName) then
+                local startedAt = tonumber(startedAtStr)
+                if startedAt and startedAt < staleThreshold then
+                    redis.call('HSET', jobKey, 'startedAt', tostring(now))
+                    redis.log(redis.LOG_WARNING, "REACQUIRED STALE JOB: " .. jobId)
+                    return jobId
+                end
+            end
         end
-      end
+    end
 
-      return nil
+    redis.log(redis.LOG_WARNING, "No jobs available")
+    return nil
 `;
 
 //----------------------------------------------------------------------------
@@ -329,7 +365,7 @@ export const updateJobScript : string = `
 `;
 
 //--------------------------------------------------------------
-export const saveJobScript : string = `
+export const saveJobScript: string = `
       -- Arguments:
       -- KEYS[1]: Job key (hash)
       -- KEYS[2]: Status set key
@@ -354,21 +390,47 @@ export const saveJobScript : string = `
       local isScheduled = ARGV[4] == "1"
       local scheduledTime = tonumber(ARGV[5]) or 0
       
-      -- Store job hash fields
-      for i = 6, #ARGV, 2 do
-        redis.call('HSET', jobKey, ARGV[i], ARGV[i+1])
+      -- DEBUG: Log what we're receiving
+      redis.log(redis.LOG_WARNING, "Saving job " .. jobId .. " with status " .. status)
+      
+      -- Store ALL job hash fields from ARGV[6] onwards
+      -- This is CRITICAL - we must save all the fields including 'name'
+      if #ARGV >= 6 then
+        local fields = {}
+        for i = 6, #ARGV, 2 do
+          if ARGV[i] and ARGV[i+1] then
+            table.insert(fields, ARGV[i])
+            table.insert(fields, ARGV[i+1])
+            -- DEBUG: Log each field being saved
+            redis.log(redis.LOG_WARNING, "Setting field: " .. ARGV[i] .. " = " .. ARGV[i+1])
+          end
+        end
+        
+        if #fields > 0 then
+          redis.call('HMSET', jobKey, unpack(fields))
+        end
       end
       
       -- Add to status set
       redis.call('SADD', statusKey, jobId)
       
-      -- Add to appropriate queue based on scheduling
-      if isScheduled then
-        redis.call('ZADD', scheduledKey, scheduledTime, jobId)
-      else
-        local priorityQueueKey = priorityKeyPrefix .. priority
-        redis.call('LPUSH', priorityQueueKey, jobId)
+      -- Add to appropriate queue based on status and scheduling
+      if status == 'pending' then
+        if isScheduled then
+          redis.call('ZADD', scheduledKey, scheduledTime, jobId)
+          redis.log(redis.LOG_WARNING, "Added job " .. jobId .. " to scheduled set")
+        else
+          -- Ensure priority is within bounds
+          priority = math.max(1, math.min(10, priority))
+          local priorityQueueKey = priorityKeyPrefix .. priority
+          redis.call('LPUSH', priorityQueueKey, jobId)
+          redis.log(redis.LOG_WARNING, "Added job " .. jobId .. " to priority queue " .. priority)
+        end
       end
+      
+      -- Verify what was saved (DEBUG)
+      local savedName = redis.call('HGET', jobKey, 'name')
+      redis.log(redis.LOG_WARNING, "Verified saved name: " .. (savedName or "NIL"))
       
       return 1
 `;

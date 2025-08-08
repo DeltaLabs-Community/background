@@ -105,7 +105,6 @@ export class RedisJobStorage implements RedisStorage {
       Object.entries(serializedJob).forEach(([key, value]) => {
         jobDataArray.push(key, value);
       });
-
       const isScheduled =
         job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
       const scheduledTime = job.scheduledAt
@@ -240,38 +239,43 @@ export class RedisJobStorage implements RedisStorage {
    * @returns The next job or null if no job is available
    */
   async acquireNextJob(handlerNames?: string[]): Promise<Job | null> {
-      try {
-        const now = Date.now();
-        const handlerNamesJson = handlerNames && handlerNames.length > 0 
-          ? JSON.stringify(handlerNames) 
-          : "null";
+    try {
+      const now = Date.now();
+      
+      const args = [
+        String(now),
+        String(this.staleJobTimeout),
+        String(handlerNames?.length || 0),
+        ...(handlerNames || [])
+      ];
 
-        const result = await this.redis.eval(
-          this.atomicAcquireScript,
-          4, // Number of keys
-          this.keyPrefix + "priority:",     // KEYS[1]
-          this.keyPrefix + "job:",          // KEYS[2] 
-          this.keyPrefix + "status:",       // KEYS[3]
-          this.scheduledJobsKey,            // KEYS[4]
-          String(now),                      // ARGV[1]
-          String(this.staleJobTimeout),     // ARGV[2]
-          handlerNamesJson                  // ARGV[3]
-        ) as string | null;
+      const result = await this.redis.eval(
+        atomicAcquireScript,
+        4, // Number of keys
+        this.keyPrefix + "priority:",     // KEYS[1]
+        this.keyPrefix + "job:",          // KEYS[2] 
+        this.keyPrefix + "status:",       // KEYS[3]
+        this.scheduledJobsKey,            // KEYS[4]
+        ...args                           // ARGV[1], ARGV[2], ARGV[3], ...
+      ) as string | null;
 
-        if (!result) {
-          return null;
-        }
+      console.log("Result",result)
 
-        const job = await this.getJob(result);
-        return job;
-
-      } catch (error) {
-        if (this.logging) {
-          console.error(`[RedisJobStorage] Error acquiring next job:`, error);
-        }
+      if (!result) {
         return null;
       }
+
+      // Get the job data
+      const job = await this.getJob(result);
+      return job;
+
+    } catch (error) {
+      if (this.logging) {
+        console.error(`[RedisJobStorage] Error acquiring next job:`, error);
+      }
+      return null;
     }
+  }
 
   /**
    * Move scheduled jobs to priority queues using a Lua script
@@ -312,10 +316,27 @@ export class RedisJobStorage implements RedisStorage {
     serialized.status = job.status;
     serialized.priority = String(job.priority || 3);
 
-    if (job.createdAt) serialized.createdAt = job.createdAt.toISOString();
-    if (job.scheduledAt) serialized.scheduledAt = job.scheduledAt.toISOString();
-    if (job.startedAt) serialized.startedAt = job.startedAt.toISOString();
-    if (job.completedAt) serialized.completedAt = job.completedAt.toISOString();
+    // Store dates as timestamps (milliseconds) for Lua compatibility
+    if (job.createdAt) {
+      serialized.createdAt = String(
+        job.createdAt instanceof Date ? job.createdAt.getTime() : job.createdAt
+      );
+    }
+    if (job.scheduledAt) {
+      serialized.scheduledAt = String(
+        job.scheduledAt instanceof Date ? job.scheduledAt.getTime() : job.scheduledAt
+      );
+    }
+    if (job.startedAt) {
+      serialized.startedAt = String(
+        job.startedAt instanceof Date ? job.startedAt.getTime() : job.startedAt
+      );
+    }
+    if (job.completedAt) {
+      serialized.completedAt = String(
+        job.completedAt instanceof Date ? job.completedAt.getTime() : job.completedAt
+      );
+    }
 
     if (job.data) serialized.data = JSON.stringify(job.data);
     if (job.result) serialized.result = JSON.stringify(job.result);
@@ -337,14 +358,30 @@ export class RedisJobStorage implements RedisStorage {
       id: data.id || "",
       name: data.name,
       status: data.status as JobStatus,
-      createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+      createdAt: new Date(),
       data: {},
     };
 
     if (data.priority) job.priority = parseInt(data.priority, 10);
-    if (data.scheduledAt) job.scheduledAt = new Date(data.scheduledAt);
-    if (data.startedAt) job.startedAt = new Date(data.startedAt);
-    if (data.completedAt) job.completedAt = new Date(data.completedAt);
+    
+    // Parse timestamps back to Date objects
+    if (data.createdAt) {
+      const timestamp = parseInt(data.createdAt, 10);
+      job.createdAt = isNaN(timestamp) ? new Date(data.createdAt) : new Date(timestamp);
+    }
+    if (data.scheduledAt) {
+      const timestamp = parseInt(data.scheduledAt, 10);
+      job.scheduledAt = isNaN(timestamp) ? new Date(data.scheduledAt) : new Date(timestamp);
+    }
+    if (data.startedAt) {
+      const timestamp = parseInt(data.startedAt, 10);
+      job.startedAt = isNaN(timestamp) ? new Date(data.startedAt) : new Date(timestamp);
+    }
+    if (data.completedAt) {
+      const timestamp = parseInt(data.completedAt, 10);
+      job.completedAt = isNaN(timestamp) ? new Date(data.completedAt) : new Date(timestamp);
+    }
+    
     if (data.repeat) job.repeat = JSON.parse(data.repeat);
     if (data.data) {
       try {
