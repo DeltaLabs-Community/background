@@ -1,10 +1,9 @@
 import { Job, JobStatus } from "../types";
 import { JobStorage } from "./base-storage";
 import type { Redis } from "ioredis";
+import { atomicAcquireScript, completeJobScript, failJobScript, saveJobScript, updateJobScript } from "./lua-scripts/scripts";
 
 export interface RedisStorage extends JobStorage {
-  // Atomic job acquisition
-  acquireNextJob(handlerNames?:string[]): Promise<Job | null>;
   // Get jobs by priority
   getJobsByPriority(priority: number): Promise<Job[]>;
   // Get scheduled jobs within a time range
@@ -17,9 +16,7 @@ export class RedisJobStorage implements RedisStorage {
   private readonly redis: Redis; // ioredis instance
   private readonly keyPrefix: string;
   private readonly jobListKey: string;
-  // Priority queues (separate lists for different priorities)
   private readonly priorityQueueKeys: { [priority: number]: string };
-  // Sorted set for scheduled jobs
   private readonly scheduledJobsKey: string;
   private readonly logging: boolean = false;
   // Lua scripts
@@ -28,6 +25,7 @@ export class RedisJobStorage implements RedisStorage {
   private readonly moveScheduledJobsScript: string;
   private readonly completeJobScript: string;
   private readonly failJobScript: string;
+  private readonly atomicAcquireScript: string;
 
   private readonly staleJobTimeout: number = 1000 * 60 * 60 * 24; // 24 hours
 
@@ -59,264 +57,12 @@ export class RedisJobStorage implements RedisStorage {
     };
     this.logging = options.logging || false;
     this.staleJobTimeout = options.staleJobTimeout || 1000 * 60 * 60 * 24; // 24 hours
-    // Define Lua script for saveJob
-    this.saveJobScript = `
-      -- Arguments:
-      -- KEYS[1]: Job key (hash)
-      -- KEYS[2]: Status set key
-      -- KEYS[3]: Scheduled set key
-      -- KEYS[4]: Priority queue key prefix
-      
-      -- ARGV[1]: Job ID
-      -- ARGV[2]: Job status
-      -- ARGV[3]: Priority (default 3)
-      -- ARGV[4]: Is scheduled (1 or 0)
-      -- ARGV[5]: Scheduled time (timestamp)
-      -- ARGV[6+]: Key-value pairs for job data (flattened)
-      
-      local jobKey = KEYS[1]
-      local statusKey = KEYS[2]
-      local scheduledKey = KEYS[3]
-      local priorityKeyPrefix = KEYS[4]
-      
-      local jobId = ARGV[1]
-      local status = ARGV[2]
-      local priority = tonumber(ARGV[3]) or 3
-      local isScheduled = ARGV[4] == "1"
-      local scheduledTime = tonumber(ARGV[5]) or 0
-      
-      -- Store job hash fields
-      for i = 6, #ARGV, 2 do
-        redis.call('HSET', jobKey, ARGV[i], ARGV[i+1])
-      end
-      
-      -- Add to status set
-      redis.call('SADD', statusKey, jobId)
-      
-      -- Add to appropriate queue based on scheduling
-      if isScheduled then
-        redis.call('ZADD', scheduledKey, scheduledTime, jobId)
-      else
-        local priorityQueueKey = priorityKeyPrefix .. priority
-        redis.call('LPUSH', priorityQueueKey, jobId)
-      end
-      
-      return 1
-    `;
-
-    // Define Lua script for updateJob
-    this.updateJobScript = `
-      -- Arguments:
-      -- KEYS[1]: Job key (hash)
-      -- KEYS[2]: New status set key 
-      -- KEYS[3]: Scheduled set key
-      -- KEYS[4]: Priority queue key prefix
-      -- KEYS[5]: Status set key prefix
-      
-      -- ARGV[1]: Job ID
-      -- ARGV[2]: Current status (for old status set)
-      -- ARGV[3]: New status
-      -- ARGV[4]: Priority (default 3)
-      -- ARGV[5]: Is scheduled (1 or 0)
-      -- ARGV[6]: Scheduled time (timestamp)
-      -- ARGV[7+]: Key-value pairs for job data (flattened)
-      
-      local jobKey = KEYS[1]
-      local newStatusKey = KEYS[2]
-      local scheduledKey = KEYS[3]
-      local priorityKeyPrefix = KEYS[4]
-      local statusKeyPrefix = KEYS[5]
-      
-      local jobId = ARGV[1]
-      local oldStatus = ARGV[2]
-      local newStatus = ARGV[3]
-      local priority = tonumber(ARGV[4]) or 3
-      local isScheduled = ARGV[5] == "1"
-      local scheduledTime = tonumber(ARGV[6]) or 0
-      
-      -- Check if job exists
-      if redis.call('EXISTS', jobKey) == 0 then
-        return {err = "Job not found: " .. jobId}
-      end
-      
-      -- Update job data
-      for i = 7, #ARGV, 2 do
-        redis.call('HSET', jobKey, ARGV[i], ARGV[i+1])
-      end
-      
-      -- Update status sets if status changed
-      if oldStatus ~= newStatus then
-        local oldStatusKey = statusKeyPrefix .. oldStatus
-        redis.call('SREM', oldStatusKey, jobId)
-        redis.call('SADD', newStatusKey, jobId)
-      end
-      
-      -- Handle queue placement based on status
-      if newStatus == 'pending' then
-        if isScheduled then
-          -- Remove from all priority queues
-          for p = 1, 10 do
-            redis.call('LREM', priorityKeyPrefix .. p, 0, jobId)
-          end
-          -- Add to scheduled set
-          redis.call('ZADD', scheduledKey, scheduledTime, jobId)
-        else
-          -- Remove from scheduled set
-          redis.call('ZREM', scheduledKey, jobId)
-          
-          -- Remove from all other priority queues
-          for p = 1, 10 do
-            if p ~= priority then
-              redis.call('LREM', priorityKeyPrefix .. p, 0, jobId)
-            end
-          end
-          
-          -- Add to correct priority queue
-          redis.call('LPUSH', priorityKeyPrefix .. priority, jobId)
-        end
-      else
-        -- If not pending, remove from all queues
-        redis.call('ZREM', scheduledKey, jobId)
-        for p = 1, 10 do
-          redis.call('LREM', priorityKeyPrefix .. p, 0, jobId)
-        end
-      end
-      
-      return 1
-    `;
-
-    // Define Lua script for moveScheduledJobs
-    this.moveScheduledJobsScript = `
-      -- Arguments:
-      -- KEYS[1]: Scheduled jobs sorted set
-      -- KEYS[2]: Job key prefix
-      -- KEYS[3]: Priority queue key prefix
-      
-      -- ARGV[1]: Current timestamp
-      
-      local scheduledKey = KEYS[1]
-      local jobKeyPrefix = KEYS[2]
-      local priorityKeyPrefix = KEYS[3]
-      local now = tonumber(ARGV[1])
-      
-      -- Get all jobs scheduled before now
-      local dueJobs = redis.call('ZRANGEBYSCORE', scheduledKey, 0, now)
-      if #dueJobs == 0 then
-        return 0  -- No jobs due yet
-      end
-      
-      local movedCount = 0
-      
-      -- Process each due job
-      for i, jobId in ipairs(dueJobs) do
-        -- Remove job from scheduled set
-        redis.call('ZREM', scheduledKey, jobId)
-        
-        -- Get job details to find priority
-        local jobKey = jobKeyPrefix .. jobId
-        
-        -- Check if job still exists
-        if redis.call('EXISTS', jobKey) == 1 then
-          -- Get current status and priority
-          local status = redis.call('HGET', jobKey, 'status')
-          local priority = tonumber(redis.call('HGET', jobKey, 'priority')) or 3
-          
-          -- Only move to queue if job is still pending
-          if status == 'pending' then
-            -- Make sure priority is within bounds
-            priority = math.max(1, math.min(10, priority))
-            
-            -- Add to appropriate priority queue
-            redis.call('LPUSH', priorityKeyPrefix .. priority, jobId)
-            movedCount = movedCount + 1
-          end
-        end
-      end
-      
-      return movedCount
-    `;
-
-    // Define Lua script for completeJob
-    this.completeJobScript = `
-      -- Arguments:
-      -- KEYS[1]: Job key
-      -- KEYS[2]: Status set key prefix 
-      
-      -- ARGV[1]: Job ID
-      -- ARGV[2]: Result (JSON string)
-      -- ARGV[3]: Completion timestamp
-      
-      local jobKey = KEYS[1]
-      local statusKeyPrefix = KEYS[2]
-      
-      local jobId = ARGV[1]
-      local result = ARGV[2]
-      local completedAt = ARGV[3]
-      
-      -- Check if job exists
-      if redis.call('EXISTS', jobKey) == 0 then
-        return {err = "Job not found: " .. jobId}
-      end
-      
-      -- Get current status
-      local currentStatus = redis.call('HGET', jobKey, 'status')
-      
-      -- Update job data
-      redis.call('HSET', jobKey, 
-        'status', 'completed',
-        'result', result,
-        'completedAt', completedAt
-      )
-      
-      -- Update status sets
-      if currentStatus then
-        redis.call('SREM', statusKeyPrefix .. currentStatus, jobId)
-      end
-      redis.call('SADD', statusKeyPrefix .. 'completed', jobId)
-      
-      return 1
-    `;
-
-    // Define Lua script for failJob
-    this.failJobScript = `
-      -- Arguments:
-      -- KEYS[1]: Job key
-      -- KEYS[2]: Status set key prefix 
-      
-      -- ARGV[1]: Job ID
-      -- ARGV[2]: Error message
-      -- ARGV[3]: Completion timestamp
-      
-      local jobKey = KEYS[1]
-      local statusKeyPrefix = KEYS[2]
-      
-      local jobId = ARGV[1]
-      local errorMsg = ARGV[2]
-      local completedAt = ARGV[3]
-      
-      -- Check if job exists
-      if redis.call('EXISTS', jobKey) == 0 then
-        return {err = "Job not found: " .. jobId}
-      end
-      
-      -- Get current status
-      local currentStatus = redis.call('HGET', jobKey, 'status')
-      
-      -- Update job data
-      redis.call('HSET', jobKey, 
-        'status', 'failed',
-        'error', errorMsg,
-        'completedAt', completedAt
-      )
-      
-      -- Update status sets
-      if currentStatus then
-        redis.call('SREM', statusKeyPrefix .. currentStatus, jobId)
-      end
-      redis.call('SADD', statusKeyPrefix .. 'failed', jobId)
-      
-      return 1
-    `;
+    this.saveJobScript = saveJobScript;
+    this.updateJobScript = updateJobScript;
+    this.moveScheduledJobsScript = this.moveScheduledJobsScript;
+    this.completeJobScript = completeJobScript;
+    this.failJobScript = failJobScript;
+    this.atomicAcquireScript = atomicAcquireScript
   }
 
   async acquireNextJobs(batchSize: number): Promise<Job[]> {
@@ -353,16 +99,13 @@ export class RedisJobStorage implements RedisStorage {
       const jobKey = this.getJobKey(job.id);
       const statusKey = this.getStatusKey(job.status);
 
-      // Serialize job data properly for Redis
       const serializedJob = this.serializeJob(job);
 
-      // Convert serialized job to flattened array for Lua
       const jobDataArray: string[] = [];
       Object.entries(serializedJob).forEach(([key, value]) => {
         jobDataArray.push(key, value);
       });
 
-      // Check if job is scheduled
       const isScheduled =
         job.scheduledAt && job.scheduledAt > new Date() ? "1" : "0";
       const scheduledTime = job.scheduledAt
@@ -370,7 +113,6 @@ export class RedisJobStorage implements RedisStorage {
         : "0";
       const priority = String(job.priority || 3);
 
-      // Run the Lua script
       await this.redis.eval(
         this.saveJobScript,
         4, // Number of keys
@@ -498,104 +240,38 @@ export class RedisJobStorage implements RedisStorage {
    * @returns The next job or null if no job is available
    */
   async acquireNextJob(handlerNames?: string[]): Promise<Job | null> {
-    try {
-      await this.moveScheduledJobs();
-
-      let jobId: string | null = null;
-      
-      for (let priority = 1; priority <= 10; priority++) {
-        const queueKey = this.priorityQueueKeys[priority];
-        
-        if (handlerNames && handlerNames.length > 0) {
-          
-          let foundJobId: string | null = null;
-          const tempJobIds: string[] = [];
-          
-          while (true) {
-            const tempJobId = await this.redis.rpop(queueKey);
-            if (!tempJobId) break;
-            
-            const jobKey = this.getJobKey(tempJobId);
-            const jobHandlerName = await this.redis.hget(jobKey, 'name');
-            
-            if (jobHandlerName && handlerNames.includes(jobHandlerName)) {
-              foundJobId = tempJobId;
-              break;
-            } else {
-              tempJobIds.push(tempJobId);
-            }
-          }
-          
-          for (let i = tempJobIds.length - 1; i >= 0; i--) {
-            await this.redis.rpush(queueKey, tempJobIds[i]);
-          }
-          
-          if (foundJobId) {
-            jobId = foundJobId;
-            break;
-          }
-        } else {
-          // No handler filtering - use original logic
-          jobId = await this.redis.rpop(queueKey);
-          if (jobId) break;
-        }
-      }
-      
-      // If no job found in priority queues, check for stale processing jobs
-      if (!jobId) {
-        const processingJobs = await this.getJobsByStatus('processing');
+      try {
         const now = Date.now();
-        const staleTime = now - this.staleJobTimeout;
-        
-        // Find the first stale job that matches handler names (if specified)
-        const staleJob = processingJobs.find(job => {
-          const isStale = job.startedAt && job.startedAt.getTime() < staleTime;
-          const matchesHandler = !handlerNames || handlerNames.length === 0 || 
-                                (job.name && handlerNames.includes(job.name));
-          return isStale && matchesHandler;
-        });
-        
-        if (staleJob) {
-          jobId = staleJob.id;
+        const handlerNamesJson = handlerNames && handlerNames.length > 0 
+          ? JSON.stringify(handlerNames) 
+          : "null";
+
+        const result = await this.redis.eval(
+          this.atomicAcquireScript,
+          4, // Number of keys
+          this.keyPrefix + "priority:",     // KEYS[1]
+          this.keyPrefix + "job:",          // KEYS[2] 
+          this.keyPrefix + "status:",       // KEYS[3]
+          this.scheduledJobsKey,            // KEYS[4]
+          String(now),                      // ARGV[1]
+          String(this.staleJobTimeout),     // ARGV[2]
+          handlerNamesJson                  // ARGV[3]
+        ) as string | null;
+
+        if (!result) {
+          return null;
         }
-      }
-      
-      if (!jobId) {
+
+        const job = await this.getJob(result);
+        return job;
+
+      } catch (error) {
+        if (this.logging) {
+          console.error(`[RedisJobStorage] Error acquiring next job:`, error);
+        }
         return null;
       }
-
-      const jobKey = this.getJobKey(jobId);
-      const statusKey = this.getStatusKey('processing');
-      const now = new Date();
-      
-      const multi = this.redis.multi();
-      
-      // Get current status first
-      const currentStatus = await this.redis.hget(jobKey, 'status');
-      
-      multi.hset(jobKey, 'status', 'processing', 'startedAt', now.toISOString());
-      
-      if (currentStatus) {
-        multi.srem(this.getStatusKey(currentStatus as JobStatus), jobId);
-      }
-      multi.sadd(statusKey, jobId);
-      
-      await multi.exec();
-      
-      const job = await this.getJob(jobId);
-
-      if (!job) {
-        return null;
-      }
-
-      return job;
-    } catch (error) {
-      if (this.logging) {
-        console.error(`[RedisJobStorage] Error acquiring next job:`, error);
-      }
-      return null;
     }
-  }
 
   /**
    * Move scheduled jobs to priority queues using a Lua script
