@@ -87,6 +87,7 @@
         if (this.logging) {
           console.error("Error updating job", error);
         }
+        throw error;
       }
     }
 

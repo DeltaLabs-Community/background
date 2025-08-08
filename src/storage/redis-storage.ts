@@ -230,6 +230,7 @@ export class RedisJobStorage implements RedisStorage {
       if (this.logging) {
         console.error(`[RedisJobStorage] Error updating job:`, error);
       }
+      throw error;
     }
   }
 
@@ -250,7 +251,7 @@ export class RedisJobStorage implements RedisStorage {
       ];
 
       const result = await this.redis.eval(
-        atomicAcquireScript,
+        this.atomicAcquireScript,
         4, // Number of keys
         this.keyPrefix + "priority:",     // KEYS[1]
         this.keyPrefix + "job:",          // KEYS[2] 
@@ -258,8 +259,6 @@ export class RedisJobStorage implements RedisStorage {
         this.scheduledJobsKey,            // KEYS[4]
         ...args                           // ARGV[1], ARGV[2], ARGV[3], ...
       ) as string | null;
-
-      console.log("Result",result)
 
       if (!result) {
         return null;

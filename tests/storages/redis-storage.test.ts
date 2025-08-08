@@ -83,14 +83,14 @@ describe("RedisJobStorage", () => {
     expect(retrievedJob?.result).toEqual({ success: true });
   });
 
-  // it("should throw error when updating non-existent job", async () => {
-  //   const nonExistentJob = {
-  //     ...testJob,
-  //     id: "non-existent",
-  //   };
+  it("should throw error when updating non-existent job", async () => {
+    const nonExistentJob = {
+      ...testJob,
+      id: "non-existent",
+    };
 
-  //   await expect(storage.updateJob(nonExistentJob)).rejects.toThrow();
-  // });
+    await expect(storage.updateJob(nonExistentJob)).rejects.toThrow();
+  });
 
   it("should get jobs by priority", async () => {
     const highPriorityJob = { ...testJob, id: "high-priority", priority: 1 };

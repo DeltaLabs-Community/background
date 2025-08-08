@@ -202,6 +202,7 @@ export class PostgreSQLJobStorage implements JobStorage {
       if (this.logging) {
         console.error(`[PostgreSQLJobStorage] Error updating job:`, error);
       }
+      throw error;
     }
   }
 

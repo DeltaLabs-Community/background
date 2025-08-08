@@ -15,12 +15,6 @@ export const atomicAcquireScript: string = `
     local now = tonumber(ARGV[1])
     local staleTimeout = tonumber(ARGV[2])
     local handlerCount = tonumber(ARGV[3]) or 0
-
-    -- Debug logging
-    redis.log(redis.LOG_WARNING, "=== ACQUIRE JOB DEBUG ===")
-    redis.log(redis.LOG_WARNING, "Now: " .. tostring(now))
-    redis.log(redis.LOG_WARNING, "Handler count: " .. tostring(handlerCount))
-    redis.log(redis.LOG_WARNING, "Keys: " .. priorityPrefix .. ", " .. jobPrefix .. ", " .. statusPrefix .. ", " .. scheduledKey)
     
     -- Build handler names set
     local handlerSet = {}
@@ -86,11 +80,9 @@ export const atomicAcquireScript: string = `
             
             if redis.call('EXISTS', jobKey) == 1 then
                 local currentStatus = redis.call('HGET', jobKey, 'status')
-                redis.log(redis.LOG_WARNING, "Job " .. jobId .. " status: " .. (currentStatus or "nil"))
                 
                 if currentStatus == 'pending' then
                     local jobName = redis.call('HGET', jobKey, 'name')
-                    redis.log(redis.LOG_WARNING, "Job " .. jobId .. " name: " .. (jobName or "nil"))
                     
                     if matchesHandler(jobName) then
                         -- Acquire the job
@@ -107,13 +99,10 @@ export const atomicAcquireScript: string = `
                     else
                         -- Put back at end
                         redis.call('LPUSH', queueKey, jobId)
-                        redis.log(redis.LOG_WARNING, "Job " .. jobId .. " doesn't match, put back")
                     end
                 else
-                    redis.log(redis.LOG_WARNING, "Job " .. jobId .. " not pending, skipping")
                 end
             else
-                redis.log(redis.LOG_WARNING, "Job " .. jobId .. " doesn't exist")
             end
         end
     end
@@ -129,21 +118,16 @@ export const atomicAcquireScript: string = `
         if redis.call('EXISTS', jobKey) == 1 then
             local startedAtStr = redis.call('HGET', jobKey, 'startedAt')
             local jobName = redis.call('HGET', jobKey, 'name')
-            
-            redis.log(redis.LOG_WARNING, "Stale check - Job " .. jobId .. " startedAt: " .. (startedAtStr or "nil"))
-            
+                        
             if startedAtStr and matchesHandler(jobName) then
                 local startedAt = tonumber(startedAtStr)
                 if startedAt and startedAt < staleThreshold then
                     redis.call('HSET', jobKey, 'startedAt', tostring(now))
-                    redis.log(redis.LOG_WARNING, "REACQUIRED STALE JOB: " .. jobId)
                     return jobId
                 end
             end
         end
     end
-
-    redis.log(redis.LOG_WARNING, "No jobs available")
     return nil
 `;
 
