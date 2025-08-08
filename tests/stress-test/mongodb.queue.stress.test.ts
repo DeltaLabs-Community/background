@@ -6,10 +6,7 @@ import { MongoClient } from "mongodb";
 dotenv.config();
 
 let testConfig = {
-    messagePerSecond: 40000,
-    postgresPort: 5432,
-    concurrency: 12,
-    rateLimitingEnabled: true,
+    concurrency: 24,
     testDurationSeconds: 8
 };
 
@@ -40,7 +37,6 @@ async function reportAnalytics() {
 
     console.log("\n=== STRESS TEST RESULTS ===");
     console.log(`Test Duration: ${duration.toFixed(2)} seconds`);
-    console.log(`Target Messages/Second: ${testConfig.messagePerSecond}`);
     console.log(`Actual Messages/Second: ${actualJobsPerSecond.toFixed(2)}`);
     console.log(`Peak Add Rate: ${analytics.peakAddRate}/s`);
     console.log(`Peak Process Rate: ${analytics.peakProcessRate}/s`);
@@ -50,7 +46,6 @@ async function reportAnalytics() {
     console.log(`Errors: ${analytics.errors}`);
     console.log(`Average Response Time: ${avgResponseTime.toFixed(2)}ms`);
     console.log(`Concurrency: ${testConfig.concurrency}`);
-    console.log(`Rate Limiting Enabled: ${testConfig.rateLimitingEnabled}`);
     console.log("===========================\n");
 }
 
@@ -104,23 +99,14 @@ function askQuestion(question: string): Promise<string> {
 
 async function collectUserInput() {
     try {
-        const messagesAnswer = await askQuestion("How many messages you want per second? (default is 40,000): ");
-        const messages = parseInt(messagesAnswer) || testConfig.messagePerSecond;
-        if (messages > 0) {
-            testConfig.messagePerSecond = messages;
-        }
-
-        const concurrencyAnswer = await askQuestion("Please specify the concurrency (default is 8): ");
+        const concurrencyAnswer = await askQuestion("Please specify the concurrency (default is 12): ");
         const concurrency = parseInt(concurrencyAnswer) || testConfig.concurrency;
         if (concurrency > 0) {
             testConfig.concurrency = concurrency;
         }
 
-        const rateLimitAnswer = await askQuestion("Do you want rate limiting to be enabled? (true/false, default is true): ");
-        testConfig.rateLimitingEnabled = rateLimitAnswer === "false" ? false : true;
-
-        const durationAnswer = await askQuestion("Test duration in seconds (default is 30): ");
-        const duration = parseInt(durationAnswer) || 30;
+        const durationAnswer = await askQuestion("Test duration in seconds (default is 8): ");
+        const duration = parseInt(durationAnswer) || 8;
         if (duration > 0) {
             testConfig.testDurationSeconds = duration;
         }
@@ -147,8 +133,8 @@ async function runStressTest() {
         const queue = new MongoDBJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
-            processingInterval:50,
-            preFetchBatchSize:1000,
+            processingInterval: 10, // Reduced for faster processing
+            preFetchBatchSize: 2000, // Increased batch size for better performance
         });
 
         // Register a simple job handler for stress testing
@@ -172,54 +158,59 @@ async function runStressTest() {
         analytics.startTime = Date.now();
         analytics.lastSecondTimestamp = Math.floor(Date.now() / 1000);
         
-        const intervalMs = 1000; // Add jobs every second
-        const jobsPerInterval = Math.ceil(testConfig.messagePerSecond / (1000 / intervalMs));
-        
-        console.log(`Adding ${jobsPerInterval} jobs every ${intervalMs}ms for ${testConfig.testDurationSeconds} seconds...`);
+        console.log(`Adding jobs as fast as possible for ${testConfig.testDurationSeconds} seconds...`);
         console.log("Real-time progress (Time | Added (rate, peak) | Processed (rate, peak) | Queue backlog | Errors):");
 
-        const addJobsInterval = setInterval(async () => {
-            const promises : Promise<any>[] = [];
-            
-            for (let i = 0; i < jobsPerInterval; i++) {
-                const jobPromise = queue.add("stress-test-job", {
-                    id: analytics.totalJobsAdded + i,
-                    timestamp: Date.now(),
-                    data: `test-data-${analytics.totalJobsAdded + i}`
-                }, { 
-                    priority: Math.floor(Math.random() * 5) + 1,
-                    timeout: 30000 
-                }).then(() => {
+        // Continuous job addition - no rate limiting
+        let shouldContinueAdding = true;
+        
+        // Start multiple concurrent job addition loops for maximum throughput
+        const addJobsPromises = Array.from({ length: 10 }, async () => {
+            while (shouldContinueAdding) {
+                try {
+                    await queue.add("stress-test-job", {
+                        id: analytics.totalJobsAdded,
+                        timestamp: Date.now(),
+                        data: `test-data-${analytics.totalJobsAdded}`
+                    }, { 
+                        priority: Math.floor(Math.random() * 5) + 1,
+                        timeout: 30000 
+                    });
+                    
                     analytics.totalJobsAdded++;
                     analytics.jobsAddedThisSecond++;
                     updateRealTimeStats();
-                }).catch((error) => {
+                } catch (error) {
                     analytics.errors++;
                     analytics.errorsThisSecond++;
                     updateRealTimeStats();
                     if (analytics.errors <= 10) { // Only log first 10 errors to avoid spam
                         console.error(`\nError adding job: ${error.message}`);
                     }
-                });
+                }
                 
-                promises.push(jobPromise);
+                // Small yield to prevent blocking the event loop
+                await new Promise(resolve => setImmediate(resolve));
             }
-            
-            await Promise.allSettled(promises);
-        }, intervalMs);
+        });
 
-        // Real-time display update (every 100ms for smooth updates)
+        // Real-time display update (every 50ms for smooth updates)
         const displayInterval = setInterval(() => {
             displayRealTimeProgress();
         }, 50);
 
         // Stop the test after the specified duration
         setTimeout(async () => {
-            clearInterval(addJobsInterval);
+            shouldContinueAdding = false;
             clearInterval(displayInterval);
             analytics.endTime = Date.now();
             
             console.log("\n\nStopping stress test...");
+            console.log("Waiting for job addition to complete...");
+            
+            // Wait for all addition promises to complete
+            await Promise.allSettled(addJobsPromises);
+            
             console.log("Waiting for remaining jobs to process...");
             
             // Wait a bit for remaining jobs to process with progress updates
@@ -273,7 +264,7 @@ async function runStressTest() {
         }, testConfig.testDurationSeconds * 1000);
 
     } catch (error) {
-        console.error("Redis connection failed:", error);
+        console.error("MongoDB connection failed:", error);
         await client.close();
         rl.close();
         process.exit(1);
@@ -301,14 +292,13 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Main execution
 async function main() {
-    console.log("MongoDB Job Queue Stress Test");
-    console.log("==========================");
+    console.log("MongoDB Job Queue Stress Test - UNLIMITED THROUGHPUT");
+    console.log("===================================================");
     
     if (process.env.AUTO_START !== 'true') {
         await collectUserInput();
         rl.close();
     } else {
-        testConfig.messagePerSecond = parseInt(process.env.MESSAGES_PER_SECOND!) || testConfig.messagePerSecond;
         console.log(`Auto-starting with config: ${JSON.stringify(testConfig, null, 2)}`);
     }
     
