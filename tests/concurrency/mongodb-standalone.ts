@@ -1,5 +1,5 @@
 import { MongoClient } from "mongodb";
-import { MongoDBJobStorage,MongoDBJobQueue } from "../../src";
+import { MongoDBJobStorage,MongoDBJobQueue } from "../../src/index.js";
 const client = new MongoClient("mongodb://localhost:27017");
 
 client.connect().then(() => {

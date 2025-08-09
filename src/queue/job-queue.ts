@@ -1,8 +1,8 @@
-import { Job, JobStatus } from "../types";
-import { JobStorage } from "../storage/base-storage";
-import { JobHandler } from "../types";
-import { generateId } from "../utils/id-generator";
-import { QueueEvent } from "../utils/queue-event";
+import { Job, JobStatus } from "../types.js";
+import { JobStorage } from "../storage/base-storage.js";
+import { JobHandler } from "../types.js";
+import { generateId } from "../utils/id-generator.js";
+import { QueueEvent } from "../utils/queue-event.js";
 export class JobQueue extends EventTarget {
   /**
    * Job handlers registered with this queue

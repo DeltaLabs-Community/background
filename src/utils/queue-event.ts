@@ -1,4 +1,4 @@
-import { Job, JobStatus } from "../types";
+import { Job, JobStatus } from "../types.js";
 
 export interface QueueEventData {
   job?: Job;

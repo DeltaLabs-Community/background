@@ -1,8 +1,8 @@
-import { JobStorage } from "../storage/base-storage";
-import { JobQueue } from "./job-queue";
-import { MongoDBJobStorage } from "../storage/mongodb-storage";
-import { Job, JobStatus } from "../types";
-import { QueueEvent } from "../utils/queue-event";
+import { JobStorage } from "../storage/base-storage.js";
+import { JobQueue } from "./job-queue.js";
+import { MongoDBJobStorage } from "../storage/mongodb-storage.js";
+import { Job, JobStatus } from "../types.js";
+import { QueueEvent } from "../utils/queue-event.js";
 
 export class MongoDBJobQueue extends JobQueue {
   private readonly mongodbStorage: MongoDBJobStorage;

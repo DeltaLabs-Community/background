@@ -1,6 +1,6 @@
 import { Pool } from "pg";
-import { JobStorage } from "./base-storage";
-import { Job, JobStatus } from "../types";
+import { JobStorage } from "./base-storage.js";
+import { Job, JobStatus } from "../types.js";
 
 /**
  * PostgreSQL storage adapter for JobQueue

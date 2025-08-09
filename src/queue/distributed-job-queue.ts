@@ -1,7 +1,7 @@
-import { Job, JobStatus } from "../types";
-import { JobQueue } from "./job-queue";
-import { RedisStorage } from "../storage/redis-storage";
-import { QueueEvent } from "../utils/queue-event";
+import { Job, JobStatus } from "../types.js";
+import { JobQueue } from "./job-queue.js";
+import { RedisStorage } from "../storage/redis-storage.js";
+import { QueueEvent } from "../utils/queue-event.js";
 /**
  * DistributedJobQueue extends JobQueue to provide distributed processing
  * capabilities across multiple instances/processes using Redis atomic operations.

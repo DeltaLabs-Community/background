@@ -1,7 +1,7 @@
-import { Job, JobStatus } from "../types";
-export { InMemoryJobStorage } from "./memory-storage";
-export { PostgreSQLJobStorage } from "./postgresql-storage";
-export { MongoDBJobStorage } from "./mongodb-storage";
+import { Job, JobStatus } from "../types.js";
+export { InMemoryJobStorage } from "./memory-storage.js";
+export { PostgreSQLJobStorage } from "./postgresql-storage.js";
+export { MongoDBJobStorage } from "./mongodb-storage.js";
 
 export interface JobStorage {
   saveJob(job: Job): Promise<void>;

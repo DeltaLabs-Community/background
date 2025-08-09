@@ -1,19 +1,19 @@
 // Re-export all types
-export type { Job, JobStatus, JobHandler } from "./types";
+export type { Job, JobStatus, JobHandler } from "./types.js";
 
 // Re-export storage interfaces and classes
-export type { JobStorage } from "./storage/base-storage";
-export { InMemoryJobStorage } from "./storage/memory-storage";
-export { PostgreSQLJobStorage } from "./storage/postgresql-storage";
-export { MongoDBJobStorage } from "./storage/mongodb-storage";
-export { RedisJobStorage } from "./storage/redis-storage";
+export type { JobStorage } from "./storage/base-storage.js";
+export { InMemoryJobStorage } from "./storage/memory-storage.js";
+export { PostgreSQLJobStorage } from "./storage/postgresql-storage.js";
+export { MongoDBJobStorage } from "./storage/mongodb-storage.js";
+export { RedisJobStorage } from "./storage/redis-storage.js";
 
 // Re-export queue implementation
-export { JobQueue } from "./queue/job-queue";
-export { DistributedJobQueue } from "./queue/distributed-job-queue";
-export { MongoDBJobQueue } from "./queue/mongodb-job-queue";
-export { PostgreSQLJobQueue } from "./queue/postgresql-job-queue";
+export { JobQueue } from "./queue/job-queue.js";
+export { DistributedJobQueue } from "./queue/distributed-job-queue.js";
+export { MongoDBJobQueue } from "./queue/mongodb-job-queue.js";
+export { PostgreSQLJobQueue } from "./queue/postgresql-job-queue.js";
 
 // Helper factory function
-export { QueueEvent } from "./utils/queue-event";
-export type { QueueEventData } from "./utils/queue-event";
+export { QueueEvent } from "./utils/queue-event.js";
+export type { QueueEventData } from "./utils/queue-event.js";

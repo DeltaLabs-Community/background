@@ -1,5 +1,5 @@
-import { Job, JobStatus } from "../types";
-import { JobStorage } from "./base-storage";
+import { Job, JobStatus } from "../types.js";
+import { JobStorage } from "./base-storage.js";
 
 export class InMemoryJobStorage implements JobStorage {
   private jobs: Map<string, Job> = new Map();

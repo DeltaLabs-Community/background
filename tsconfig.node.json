@@ -2,14 +2,21 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist/node",
-    "module": "ESNext",
-    "target": "ES2020",
-    "lib": ["ES2020", "DOM"],
-    "moduleResolution": "bundler",
-    "esModuleInterop": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+    "lib": ["ESNext", "DOM"],
+    "types": ["node"],
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "allowJs": true,
+    "noEmit": false,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules,tests,examples,.husky,dist"]
 }

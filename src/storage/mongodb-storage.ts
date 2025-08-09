@@ -1,6 +1,6 @@
   import { Collection, MongoClient } from "mongodb";
-  import { JobStorage } from "./base-storage";
-  import { Job, JobStatus } from "../types";
+  import { JobStorage } from "./base-storage.js";
+  import { Job, JobStatus } from "../types.js";
 
   /**
    * MongoDB storage adapter for JobQueue

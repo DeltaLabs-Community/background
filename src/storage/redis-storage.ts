@@ -1,7 +1,7 @@
-import { Job, JobStatus } from "../types";
-import { JobStorage } from "./base-storage";
+import { Job, JobStatus } from "../types.js";
+import { JobStorage } from "./base-storage.js";
 import type { Redis } from "ioredis";
-import { atomicAcquireScript, completeJobScript, failJobScript, saveJobScript, updateJobScript,moveScheduledJobsScript } from "./lua-scripts/scripts";
+import { atomicAcquireScript, completeJobScript, failJobScript, saveJobScript, updateJobScript,moveScheduledJobsScript } from "./lua-scripts/scripts.js";
 
 export interface RedisStorage extends JobStorage {
   // Get jobs by priority
