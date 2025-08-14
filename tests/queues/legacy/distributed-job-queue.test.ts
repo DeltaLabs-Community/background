@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { DistributedJobQueue } from "../../src/queue/distributed-job-queue";
-import { RedisJobStorage } from "../../src/storage/redis-storage";
-import { Job, JobHandler } from "../../src/types";
+import { DistributedJobQueue, RedisJobStorage,JobHandler,QueueEvent,Job } from "../../../src";
 import Redis from "ioredis";
-import { QueueEvent } from "../../src/utils/queue-event";
 import dotenv from "dotenv";
 
 /**
