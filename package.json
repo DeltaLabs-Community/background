@@ -24,10 +24,10 @@
     "//":"-------------------------- test scripts ---------------------",
     "test:redis-storage": "vitest run tests/storages/redis-storage.test.ts",
     "test:storage": "vitest run tests/storages/in-memory-storage.test.ts",
-    "test:distributed": "vitest run tests/queues/distributed-job-queue.test.ts",
-    "test:queue": "vitest run tests/queues/job-queue.test.ts",
-    "test:postgres": "vitest run tests/queues/postgresql-job-queue.test.ts",
-    "test:mongodb": "vitest run tests/queues/mongodb-job-queue.test.ts",
+    "test:distributed": "vitest run tests/queues/legacy/distributed-job-queue.test.ts",
+    "test:queue": "vitest run tests/queues/legacy/job-queue.test.ts",
+    "test:postgres": "vitest run tests/queues/legacy/postgresql-job-queue.test.ts",
+    "test:mongodb": "vitest run tests/queues/legacy/mongodb-job-queue.test.ts",
 
     "//":"-------------------------- stress test scripts  ---------------",
     "stress-testdistributed": "tsx tests/stress-test/redis.queue.stress.test.ts",
@@ -66,9 +66,9 @@
     "README.md"
   ],
   "peerDependencies": {
-    "ioredis": ">=5.6.1",
-    "mongodb": ">=6.16.0",
-    "pg": ">=8.15.1"
+    "ioredis": "^5.6.1",
+    "mongodb": "^6.16.0",
+    "pg": "^8.15.1"
   },
   "devDependencies": {
     "@hono/node-server": "^1.18.1",
