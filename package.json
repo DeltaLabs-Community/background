@@ -15,20 +15,27 @@
     }
   },
   "scripts": {
+    "//":"----------------------------- build scripts -----------------",
     "build": "npm run clean && npm run build:node && npm run build:bun",
     "build:bun": "tsc -p tsconfig.bun.json",
     "build:node": "tsc -p tsconfig.node.json",
+    "clean": "rimraf dist",
+    
+    "//":"-------------------------- test scripts ---------------------",
     "test:redis-storage": "vitest run tests/storages/redis-storage.test.ts",
     "test:storage": "vitest run tests/storages/in-memory-storage.test.ts",
     "test:distributed": "vitest run tests/queues/distributed-job-queue.test.ts",
     "test:queue": "vitest run tests/queues/job-queue.test.ts",
     "test:postgres": "vitest run tests/queues/postgresql-job-queue.test.ts",
     "test:mongodb": "vitest run tests/queues/mongodb-job-queue.test.ts",
-    "stress-test:distributed": "tsx tests/stress-test/redis.queue.stress.test.ts",
+
+    "//":"-------------------------- stress test scripts  ---------------",
+    "stress-testdistributed": "tsx tests/stress-test/redis.queue.stress.test.ts",
     "stress-test:postgres": "tsx tests/stress-test/postgres.queue.stress.test.ts",
     "stress-test:mongodb": "tsx tests/stress-test/mongodb.queue.stress.test.ts",
     "run-multiple":"tsx tests/stress-test/run.multiple.ts",
-    "clean": "rimraf dist",
+    
+    "//":"------------------------- examples ----------------------------",
     "hono:inmemory": "nodemon --exec tsx examples/hono/server-inmemory.ts",
     "hono:redis": "nodemon --exec tsx examples/hono/server-redis.ts",
     "hono:mongo": "nodemon --exec tsx examples/hono/server-mongo.ts",
