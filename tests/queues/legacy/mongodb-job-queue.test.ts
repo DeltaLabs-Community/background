@@ -7,12 +7,9 @@ import {
   vi,
   afterAll,
 } from "vitest";
-import { MongoDBJobStorage } from "../../src/storage/mongodb-storage";
-import { MongoDBJobQueue } from "../../src/queue/mongodb-job-queue";
+import { MongoDBJobStorage,MongoDBJobQueue,Job,JobHandler,QueueEvent } from "../../../src";
 import { MongoClient } from "mongodb";
-import { Job, JobHandler } from "../../src/types";
 import dotenv from "dotenv";
-import { QueueEvent } from "../../src/utils/queue-event";
 
 describe("MongoDBJobQueue", () => {
   dotenv.config();

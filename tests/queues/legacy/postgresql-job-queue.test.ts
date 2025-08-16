@@ -5,14 +5,10 @@ import {
   beforeEach,
   afterEach,
   vi,
-  afterAll,
 } from "vitest";
-import { PostgreSQLJobStorage } from "../../src/storage/postgresql-storage";
-import { PostgreSQLJobQueue } from "../../src/queue/postgresql-job-queue";
+import { PostgreSQLJobStorage,PostgreSQLJobQueue,Job,JobHandler,QueueEvent } from "../../../src";
 import { Pool } from "pg";
-import { Job, JobHandler } from "../../src/types";
 import dotenv from "dotenv";
-import { QueueEvent } from "../../src/utils/queue-event";
 describe("PostgreSQLJobQueue", () => {
   let pool: Pool;
   let storage: PostgreSQLJobStorage;

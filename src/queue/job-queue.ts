@@ -4,21 +4,31 @@ import { JobHandler } from "../types.js";
 import { generateId } from "../utils/id-generator.js";
 import { QueueEvent } from "../utils/queue-event.js";
 export class JobQueue extends EventTarget {
+  
   /**
    * Job handlers registered with this queue
    */
   protected handlers: Map<string, JobHandler> = new Map();
   protected storage: JobStorage;
+
   /**
    * Set of job IDs that are currently being processed
    */
   protected activeJobs: Set<string> = new Set();
-  protected readonly jobBuffer: Job[] = []; // Prefetch buffer
+
+  /**
+   * Buffer that is filled based on prefetchBatchSize
+   */
+  protected readonly jobBuffer: Job[] = [];
   protected preFetchBatchSize: number | undefined;
+
+
   /**
    * Number of jobs that can be processed concurrently
    */
   protected concurrency: number;
+
+
   /**
    * Interval in milliseconds at which to check for new jobs
    */
@@ -30,6 +40,7 @@ export class JobQueue extends EventTarget {
   protected logging: boolean = false;
   private lastPollingInterval: number = 0;
   private pollingErrorCount: number = 0;
+
   // Intelligent polling properties
   private intelligentPolling: boolean = false;
   private minInterval: number = 100; // Minimum polling interval (ms)

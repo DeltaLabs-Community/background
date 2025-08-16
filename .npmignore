@@ -5,3 +5,4 @@ examples/
 tests/
 node_modules/
 .env
+dev/
