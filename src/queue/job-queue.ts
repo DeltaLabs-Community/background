@@ -546,19 +546,26 @@ export class JobQueue extends EventTarget {
       }
 
 
-      const result = await Promise.race([
-        handler(job.data),
-        new Promise((_, reject) => {
+      let timeoutId: NodeJS.Timeout | number | undefined;
+      let result: any;
+
+      try {
+        const timeoutPromise = new Promise((_, reject) => {
           const timeoutMs = job.timeout || 10000;
-          const timeoutId = setTimeout(() => {
+          timeoutId = setTimeout(() => {
             reject(new Error(`Job timeout exceeded (${timeoutMs}ms)`));
           }, timeoutMs);
-          // Ensure timeoutId is used to prevent optimization
-          if (this.logging) {
-            console.log(`[${this.name}] Set timeout ${timeoutId} for job ${job.id} (${timeoutMs}ms)`);
-          }
-        })
-      ]);
+        });
+
+        result = await Promise.race([
+          handler(job.data),
+          timeoutPromise
+        ]);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
 
       if (this.isStopping) {
         console.log(`[${this.name}] Queue is stopping, skipping job ${job.id}`);
