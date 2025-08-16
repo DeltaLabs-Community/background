@@ -20,7 +20,7 @@ const npmCommand = platform() === 'win32' ? 'npm.cmd' : 'npm';
 
 for (let i = 0; i < numberOfProcesses; i++) {
     const workerId = i + 1;
-    const child = spawn("npm", ['run', 'stress-test:distributed'], {
+    const child = spawn("npm", ['run', 'stress-test:redis'], {
         shell:true,
         env: {
             ...process.env,
