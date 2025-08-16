@@ -26,4 +26,4 @@ export interface Job<T = any> {
 }
 
 // Define job handler type
-export type JobHandler<T = any, R = any> = (data: T) => Promise<R>;
+export type JobHandler<T = any, R = any> = (data: T) => (Promise<R> | R);
