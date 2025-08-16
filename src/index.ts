@@ -10,7 +10,7 @@ export { RedisJobStorage } from "./storage/redis-storage.js";
 
 // Re-export queue implementation
 export { JobQueue } from "./queue/job-queue.js";
-export { DistributedJobQueue } from "./queue/distributed-job-queue.js";
+export { RedisJobQueue } from "./queue/redis-job-queue.js";
 export { MongoDBJobQueue } from "./queue/mongodb-job-queue.js";
 export { PostgreSQLJobQueue } from "./queue/postgresql-job-queue.js";
 

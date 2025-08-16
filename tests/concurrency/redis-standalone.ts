@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import { RedisJobStorage, DistributedJobQueue } from "../../src";
+import { RedisJobStorage, RedisJobQueue } from "../../src";
 
 const redis = new Redis("redis://localhost:6379");
 
@@ -15,7 +15,7 @@ const jobStorage = new RedisJobStorage(redis, {
   keyPrefix: "test",
 });
 
-const queue = new DistributedJobQueue(jobStorage, {
+const queue = new RedisJobQueue(jobStorage, {
   name: "test",
   processingInterval: 50,
   maxRetries: 3,

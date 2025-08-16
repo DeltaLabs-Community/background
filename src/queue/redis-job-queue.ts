@@ -6,7 +6,7 @@ import { QueueEvent } from "../utils/queue-event.js";
  * DistributedJobQueue extends JobQueue to provide distributed processing
  * capabilities across multiple instances/processes using Redis atomic operations.
  */
-export class DistributedJobQueue extends JobQueue {
+export class RedisJobQueue extends JobQueue {
   private readonly redisStorage: RedisStorage;
   private readonly jobTTL: number = 30; // seconds
 

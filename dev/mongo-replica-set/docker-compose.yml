@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mongo1:
+    image: mongo:latest
+    container_name: mongo1
+    restart: always
+    ports:
+      - "27017:27017"
+    command: mongod --replSet rs0 --bind_ip_all
+    volumes:
+      - C:/Users/PC/Documents/mongodb-data/set1:/data/db
+    networks:
+      - app-network
+
+  mongo2:
+    image: mongo:latest
+    container_name: mongo2
+    restart: always
+    ports:
+      - "27018:27017"
+    command: mongod --replSet rs0 --bind_ip_all
+    volumes:
+      - C:/Users/PC/Documents/mongodb-data/set2:/data/db
+    networks:
+      - app-network
+
+  mongo3:
+    image: mongo:latest
+    container_name: mongo3
+    restart: always
+    ports:
+      - "27019:27017"
+    command: mongod --replSet rs0 --bind_ip_all
+    volumes:
+      - C:/Users/PC/Documents/mongodb-data/set3:/data/db
+    networks:
+      - app-network
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

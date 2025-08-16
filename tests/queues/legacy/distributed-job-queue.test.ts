@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { DistributedJobQueue, RedisJobStorage,JobHandler,QueueEvent,Job } from "../../../src";
+import { RedisJobQueue, RedisJobStorage,JobHandler,QueueEvent,Job } from "../../../src";
 import Redis from "ioredis";
 import dotenv from "dotenv";
 
@@ -9,7 +9,7 @@ import dotenv from "dotenv";
  * and that they are not affected by other tests
  */
 
-describe("DistributedJobQueue", () => {
+describe("RedisJobQueue", () => {
   let redis: Redis;
   let storage: RedisJobStorage;
   let mockHandler: JobHandler;
@@ -29,7 +29,7 @@ describe("DistributedJobQueue", () => {
   });
 
   it("should process jobs with locking", async () => {
-    const queue = new DistributedJobQueue(storage, {
+    const queue = new RedisJobQueue(storage, {
       concurrency: 1,
       name: "worker-1",
       processingInterval: 50,
@@ -47,7 +47,7 @@ describe("DistributedJobQueue", () => {
   });
 
   it("should schedule jobs for later execution", async () => {
-    const queue = new DistributedJobQueue(storage, {
+    const queue = new RedisJobQueue(storage, {
       concurrency: 1,
       name: "worker-1",
       processingInterval: 100,
@@ -74,7 +74,7 @@ describe("DistributedJobQueue", () => {
   });
 
   it("should process jobs concurrently", async () => {
-    const concurrentQueue = new DistributedJobQueue(storage, {
+    const concurrentQueue = new RedisJobQueue(storage, {
       concurrency: 2,
       name: "worker-2",
       processingInterval: 100,
@@ -139,7 +139,7 @@ describe("DistributedJobQueue", () => {
   // });
 
   it("should handle intelligent polling", async () => {
-    const queue = new DistributedJobQueue(storage, {
+    const queue = new RedisJobQueue(storage, {
       concurrency: 1,
       processingInterval: 100,
       intelligentPolling: true,
@@ -171,7 +171,7 @@ describe("DistributedJobQueue", () => {
   });
 
   it("it should handle timeout",async()=>{
-    const queue = new DistributedJobQueue(storage,{
+    const queue = new RedisJobQueue(storage,{
       concurrency:1,
       processingInterval:100
     })
@@ -194,7 +194,7 @@ describe("DistributedJobQueue", () => {
 
   it("it should process stale jobs",async()=>{
     let staled = false;
-    const queue = new DistributedJobQueue(storage,{
+    const queue = new RedisJobQueue(storage,{
       concurrency:1,
       processingInterval:100
     })

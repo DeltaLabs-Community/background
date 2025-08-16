@@ -1,6 +1,6 @@
 import readline from "readline";
 import Redis from "ioredis";
-import { DistributedJobQueue, RedisJobStorage } from "../../src";
+import { RedisJobQueue, RedisJobStorage } from "../../src";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -150,7 +150,7 @@ async function runStressTest() {
         console.log(`Configuration: ${JSON.stringify(testConfig, null, 2)}`);
 
         const storage = new RedisJobStorage(redis);
-        const queue = new DistributedJobQueue(storage, {
+        const queue = new RedisJobQueue(storage, {
             concurrency: testConfig.concurrency,
             logging: false,
             processingInterval: 10, // Reduced for faster processing
