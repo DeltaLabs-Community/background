@@ -20,16 +20,17 @@ const queue = new RedisJobQueue(jobStorage, {
   processingInterval: 50,
   maxRetries: 3,
   concurrency: 10,
-  preFetchBatchSize:50,
+  preFetchBatchSize:100,
   logging: false,
 });
 
 queue.register("test-job", async (data) => {
-  console.log(data);
+  await new Promise((resolve) => setTimeout(resolve, 100));
   return { processed: true };
 });
 
 queue.addEventListener("completed", (event: any) => {
+  console.log("job completed",event.data?.job.id);
 });
 
 queue.addEventListener("buffer-refill-success", (event: any) => {
@@ -38,7 +39,6 @@ queue.addEventListener("buffer-refill-success", (event: any) => {
 
 
 queue.start();
-
 
 for(let i = 0; i < 1000; i ++){
   queue.add("test-job",{
